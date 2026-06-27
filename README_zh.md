@@ -18,13 +18,13 @@ OSRacer Base 是 OSRacer 的 ROS 2 基础底盘驱动包。它提供速度控制
 - 系统依赖：
   - `python3-serial`
 
-Ubuntu 下如果没有串口权限，通常需要把当前用户加入 `dialout` 组：
+Ubuntu 下需要安装 OSRacer udev 规则，并把当前用户加入 `dialout` 组：
 
 ```bash
-sudo usermod -a -G dialout $USER
+ros2 run osracer_base install_udev_rules
 ```
 
-执行后重新登录系统。
+安装后重新插拔车辆 USB 线。如果脚本修改了用户组，重新登录系统后生效。
 
 ## 安装依赖
 
@@ -32,14 +32,14 @@ Humble:
 
 ```bash
 sudo apt update
-sudo apt install ros-humble-ackermann-msgs python3-serial
+sudo apt install ros-humble-ackermann-msgs python3-serial udev
 ```
 
 Jazzy:
 
 ```bash
 sudo apt update
-sudo apt install ros-jazzy-ackermann-msgs python3-serial
+sudo apt install ros-jazzy-ackermann-msgs python3-serial udev
 ```
 
 ## 构建
@@ -58,10 +58,14 @@ source install/setup.bash
 ## 启动
 
 ```bash
-ros2 launch osracer_base chassis_driver.launch.py port:=/dev/ttyACM0
+ros2 launch osracer_base chassis_driver.launch.py
 ```
 
-如果设备路径不同，替换 `port` 参数即可。
+默认设备路径是 `/dev/osrbot_base`。如果现场设备路径不同，可以手动覆盖：
+
+```bash
+ros2 launch osracer_base chassis_driver.launch.py port:=/dev/ttyACM0
+```
 
 ## ROS 接口
 
@@ -94,7 +98,7 @@ sensor_msgs/msg/BatteryState
 
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
-| `port` | `/dev/ttyACM0` | 底盘串口设备 |
+| `port` | `/dev/osrbot_base` | 底盘串口设备 |
 | `baudrate` | `460800` | 串口波特率 |
 | `wheelbase` | `0.285` | 轴距，单位 m |
 | `max_speed` | `3.0` | 最大速度，单位 m/s |
@@ -125,4 +129,10 @@ ros2 topic pub --once /ackermann_cmd ackermann_msgs/msg/AckermannDriveStamped \
 
 ```bash
 ros2 topic echo /battery_state
+```
+
+检查设备绑定：
+
+```bash
+ros2 run osracer_base check_device
 ```

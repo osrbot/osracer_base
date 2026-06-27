@@ -18,13 +18,13 @@ OSRacer Base is the minimal ROS 2 chassis driver package for OSRacer. It exposes
 - System package:
   - `python3-serial`
 
-On Ubuntu, add your user to the `dialout` group if the serial device cannot be opened:
+On Ubuntu, install the OSRacer udev rule and add your user to the `dialout` group:
 
 ```bash
-sudo usermod -a -G dialout $USER
+ros2 run osracer_base install_udev_rules
 ```
 
-Log out and log back in after changing group membership.
+Unplug and reconnect the vehicle USB cable after installing the rule. Log out and log back in if your group membership changed.
 
 ## Install Dependencies
 
@@ -32,14 +32,14 @@ Humble:
 
 ```bash
 sudo apt update
-sudo apt install ros-humble-ackermann-msgs python3-serial
+sudo apt install ros-humble-ackermann-msgs python3-serial udev
 ```
 
 Jazzy:
 
 ```bash
 sudo apt update
-sudo apt install ros-jazzy-ackermann-msgs python3-serial
+sudo apt install ros-jazzy-ackermann-msgs python3-serial udev
 ```
 
 ## Build
@@ -58,10 +58,14 @@ source install/setup.bash
 ## Launch
 
 ```bash
-ros2 launch osracer_base chassis_driver.launch.py port:=/dev/ttyACM0
+ros2 launch osracer_base chassis_driver.launch.py
 ```
 
-Use a different `port` value if your device path is different.
+The default device path is `/dev/osrbot_base`. Use a different `port` value only when needed:
+
+```bash
+ros2 launch osracer_base chassis_driver.launch.py port:=/dev/ttyACM0
+```
 
 ## ROS API
 
@@ -94,7 +98,7 @@ Both control topics can be used. The driver applies the most recent command. If 
 
 | Parameter | Default | Description |
 | --- | --- | --- |
-| `port` | `/dev/ttyACM0` | Chassis serial device |
+| `port` | `/dev/osrbot_base` | Chassis serial device |
 | `baudrate` | `460800` | Serial baud rate |
 | `wheelbase` | `0.285` | Wheelbase in meters |
 | `max_speed` | `3.0` | Maximum speed in m/s |
@@ -125,4 +129,10 @@ Battery status:
 
 ```bash
 ros2 topic echo /battery_state
+```
+
+Device check:
+
+```bash
+ros2 run osracer_base check_device
 ```

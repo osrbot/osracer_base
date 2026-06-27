@@ -18,7 +18,7 @@ class ChassisDriver(Node):
     def __init__(self):
         super().__init__('osracer_base')
 
-        self.declare_parameter('port', '/dev/ttyACM0')
+        self.declare_parameter('port', '/dev/osrbot_base')
         self.declare_parameter('baudrate', 460800)
         self.declare_parameter('wheelbase', 0.285)
         self.declare_parameter('max_speed', 3.0)

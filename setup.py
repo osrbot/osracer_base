@@ -11,6 +11,8 @@ setup(
         ('share/ament_index/resource_index/packages', [f'resource/{package_name}']),
         (f'share/{package_name}', ['package.xml', 'README.md', 'README_zh.md']),
         (f'share/{package_name}/launch', glob('launch/*.launch.py')),
+        (f'share/{package_name}/scripts', glob('scripts/*')),
+        (f'share/{package_name}/udev', glob('udev/*.rules')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -21,6 +23,8 @@ setup(
     entry_points={
         'console_scripts': [
             'chassis_driver = osracer_base.chassis_driver:main',
+            'check_device = osracer_base.tools.check_device:main',
+            'install_udev_rules = osracer_base.tools.install_udev_rules:main',
         ],
     },
 )

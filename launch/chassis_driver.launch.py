@@ -6,7 +6,7 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
     args = [
-        DeclareLaunchArgument('port', default_value='/dev/ttyACM0'),
+        DeclareLaunchArgument('port', default_value='/dev/osrbot_base'),
         DeclareLaunchArgument('baudrate', default_value='460800'),
         DeclareLaunchArgument('wheelbase', default_value='0.285'),
         DeclareLaunchArgument('max_speed', default_value='3.0'),
