@@ -15,6 +15,7 @@ OSRacer Base 是 OSRacer 的 ROS 2 基础底盘驱动包。它提供速度控制
   - `sensor_msgs`
   - `tf2_ros`
   - `ros2launch`
+  - `rviz2`
 - 系统依赖：
   - `python3-serial`
 
@@ -32,14 +33,14 @@ Humble:
 
 ```bash
 sudo apt update
-sudo apt install ros-humble-ackermann-msgs python3-serial udev
+sudo apt install ros-humble-ackermann-msgs ros-humble-rviz2 python3-serial udev
 ```
 
 Jazzy:
 
 ```bash
 sudo apt update
-sudo apt install ros-jazzy-ackermann-msgs python3-serial udev
+sudo apt install ros-jazzy-ackermann-msgs ros-jazzy-rviz2 python3-serial udev
 ```
 
 ## 构建
@@ -68,6 +69,20 @@ ros2 launch osracer_base chassis_driver.launch.py
 ```bash
 ros2 launch osracer_base chassis_driver.launch.py port:=/dev/ttyACM0
 ```
+
+查看里程计和 TF：
+
+```bash
+ros2 launch osracer_base odom_view.launch.py
+```
+
+发布 SLAM 常用静态 TF 示例：
+
+```bash
+ros2 launch osracer_base description.launch.py
+```
+
+该示例会补充 `base_footprint`、`base_link`、`imu_link` 和 `laser_frame` 之间的静态坐标关系。激光雷达实际安装位置不同的话，可以用 `laser_x`、`laser_y`、`laser_z`、`laser_yaw` 覆盖。
 
 ## ROS 接口
 

@@ -7,7 +7,7 @@ def main():
     device = Path('/dev/osrbot_base')
     print(f'Checking OSRacer device: {device}')
     if device.exists():
-        print(device.resolve())
+        print(f'Device path: {device.resolve()}')
         print_udev_info(device)
         return
 
@@ -35,10 +35,40 @@ def print_udev_info(device):
     except FileNotFoundError:
         return
 
-    wanted = ('ID_VENDOR_ID=', 'ID_MODEL_ID=', 'ID_SERIAL_SHORT=', 'ID_MODEL=', 'ID_VENDOR=')
-    for line in result.stdout.splitlines():
-        if line.startswith(wanted):
-            print(line)
+    props = parse_udev_properties(result.stdout)
+    vendor_id = props.get('ID_VENDOR_ID', '')
+    model_id = props.get('ID_MODEL_ID', '')
+    serial = props.get('ID_SERIAL_SHORT', '')
+    manufacturer = normalize_udev_text(props.get('ID_VENDOR', ''))
+    product = normalize_udev_text(props.get('ID_MODEL', ''))
+
+    if vendor_id:
+        print(f'USB vendor ID: {vendor_id}')
+    if model_id:
+        print(f'USB product ID: {model_id}')
+    if manufacturer:
+        print(f'Manufacturer: {manufacturer}')
+    if product:
+        print(f'Product: {product}')
+    if serial:
+        print(f'Serial: {serial}')
+
+
+def parse_udev_properties(text):
+    props = {}
+    for line in text.splitlines():
+        if '=' not in line:
+            continue
+        key, value = line.split('=', 1)
+        props[key] = value
+    return props
+
+
+def normalize_udev_text(value):
+    text = value.replace('_', ' ').strip()
+    while '  ' in text:
+        text = text.replace('  ', ' ')
+    return text
 
 
 if __name__ == '__main__':

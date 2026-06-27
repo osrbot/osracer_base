@@ -11,6 +11,7 @@ setup(
         ('share/ament_index/resource_index/packages', [f'resource/{package_name}']),
         (f'share/{package_name}', ['package.xml', 'README.md', 'README_zh.md']),
         (f'share/{package_name}/launch', glob('launch/*.launch.py')),
+        (f'share/{package_name}/rviz', glob('rviz/*.rviz')),
         (f'share/{package_name}/scripts', glob('scripts/*')),
         (f'share/{package_name}/udev', glob('udev/*.rules')),
     ],

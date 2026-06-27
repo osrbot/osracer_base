@@ -15,6 +15,7 @@ OSRacer Base is the minimal ROS 2 chassis driver package for OSRacer. It exposes
   - `sensor_msgs`
   - `tf2_ros`
   - `ros2launch`
+  - `rviz2`
 - System package:
   - `python3-serial`
 
@@ -32,14 +33,14 @@ Humble:
 
 ```bash
 sudo apt update
-sudo apt install ros-humble-ackermann-msgs python3-serial udev
+sudo apt install ros-humble-ackermann-msgs ros-humble-rviz2 python3-serial udev
 ```
 
 Jazzy:
 
 ```bash
 sudo apt update
-sudo apt install ros-jazzy-ackermann-msgs python3-serial udev
+sudo apt install ros-jazzy-ackermann-msgs ros-jazzy-rviz2 python3-serial udev
 ```
 
 ## Build
@@ -68,6 +69,20 @@ The default device path is `/dev/osrbot_base`. Use a different `port` value only
 ```bash
 ros2 launch osracer_base chassis_driver.launch.py port:=/dev/ttyACM0
 ```
+
+View odometry and TF in RViz:
+
+```bash
+ros2 launch osracer_base odom_view.launch.py
+```
+
+Publish a static TF example for SLAM bringup:
+
+```bash
+ros2 launch osracer_base description.launch.py
+```
+
+The example provides static transforms between `base_footprint`, `base_link`, `imu_link`, and `laser_frame`. Override `laser_x`, `laser_y`, `laser_z`, and `laser_yaw` if the LiDAR mounting position is different.
 
 ## ROS API
 
