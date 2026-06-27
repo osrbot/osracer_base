@@ -61,6 +61,8 @@ source install/setup.bash
 ros2 launch osracer_base chassis_driver.launch.py
 ```
 
+启动成功后，驱动会在日志中打印底盘固件 `ProjectVer`。如果遥控器处于优先控制状态，驱动会提示 ROS 运动指令可能暂时不会生效。
+
 默认设备路径是 `/dev/osrbot_base`。如果现场设备路径不同，可以手动覆盖：
 
 ```bash
@@ -100,10 +102,12 @@ sensor_msgs/msg/BatteryState
 | --- | --- | --- |
 | `port` | `/dev/osrbot_base` | 底盘串口设备 |
 | `baudrate` | `460800` | 串口波特率 |
-| `wheelbase` | `0.285` | 轴距，单位 m |
-| `max_speed` | `3.0` | 最大速度，单位 m/s |
+| `wheelbase` | `0.325` | B102 轴距，单位 m |
+| `max_speed` | `1.5` | ROS 控制速度上限，单位 m/s；参数填大也会限制到 `1.5` |
+| `speed_mode` | `high` | `high` 使用 `max_speed`，`low` 使用 `max_speed * 0.15` |
 | `max_steering_angle` | `0.5235987756` | 最大转向角，单位 rad |
 | `cmd_timeout` | `0.5` | 控制超时时间，单位 s |
+| `firmware_version_timeout` | `0.5` | 启动时读取底盘固件版本的等待时间，单位 s |
 | `odom_frame_id` | `odom` | 里程计坐标系 |
 | `base_frame_id` | `base_footprint` | 车体坐标系 |
 | `imu_frame_id` | `imu_link` | IMU 坐标系 |

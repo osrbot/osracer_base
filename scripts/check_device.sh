@@ -6,6 +6,10 @@ DEVICE="${1:-/dev/osrbot_base}"
 echo "Checking OSRacer device: ${DEVICE}"
 if [[ -e "${DEVICE}" ]]; then
   ls -l "${DEVICE}"
+  if command -v udevadm >/dev/null 2>&1; then
+    udevadm info --query=property --name="${DEVICE}" 2>/dev/null \
+      | grep -E '^(ID_VENDOR_ID|ID_MODEL_ID|ID_SERIAL_SHORT|ID_MODEL|ID_VENDOR)=' || true
+  fi
   exit 0
 fi
 

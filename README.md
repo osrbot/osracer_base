@@ -61,6 +61,8 @@ source install/setup.bash
 ros2 launch osracer_base chassis_driver.launch.py
 ```
 
+After startup, the driver logs the chassis firmware `ProjectVer`. If the RC transmitter is in priority control mode, the driver warns that ROS motion commands may be ignored until serial control is selected.
+
 The default device path is `/dev/osrbot_base`. Use a different `port` value only when needed:
 
 ```bash
@@ -100,10 +102,12 @@ Both control topics can be used. The driver applies the most recent command. If 
 | --- | --- | --- |
 | `port` | `/dev/osrbot_base` | Chassis serial device |
 | `baudrate` | `460800` | Serial baud rate |
-| `wheelbase` | `0.285` | Wheelbase in meters |
-| `max_speed` | `3.0` | Maximum speed in m/s |
+| `wheelbase` | `0.325` | B102 wheelbase in meters |
+| `max_speed` | `1.5` | ROS control speed limit in m/s; larger values are capped at `1.5` |
+| `speed_mode` | `high` | `high` uses `max_speed`; `low` uses `max_speed * 0.15` |
 | `max_steering_angle` | `0.5235987756` | Maximum steering angle in radians |
 | `cmd_timeout` | `0.5` | Command timeout in seconds |
+| `firmware_version_timeout` | `0.5` | Startup wait time for reading chassis firmware version, in seconds |
 | `odom_frame_id` | `odom` | Odometry frame |
 | `base_frame_id` | `base_footprint` | Vehicle base frame |
 | `imu_frame_id` | `imu_link` | IMU frame |

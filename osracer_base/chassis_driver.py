@@ -1,6 +1,8 @@
 import math
 import os
+import re
 import threading
+import time
 
 import rclpy
 from ackermann_msgs.msg import AckermannDriveStamped
@@ -14,17 +16,23 @@ from tf2_ros import TransformBroadcaster
 import serial
 
 
+MAX_ALLOWED_SPEED = 1.5
+LOW_SPEED_RATIO = 0.15
+
+
 class ChassisDriver(Node):
     def __init__(self):
         super().__init__('osracer_base')
 
         self.declare_parameter('port', '/dev/osrbot_base')
         self.declare_parameter('baudrate', 460800)
-        self.declare_parameter('wheelbase', 0.285)
-        self.declare_parameter('max_speed', 3.0)
+        self.declare_parameter('wheelbase', 0.325)
+        self.declare_parameter('max_speed', MAX_ALLOWED_SPEED)
+        self.declare_parameter('speed_mode', 'high')
         self.declare_parameter('max_steering_angle', math.radians(30.0))
         self.declare_parameter('cmd_timeout', 0.5)
         self.declare_parameter('reconnect_interval', 2.0)
+        self.declare_parameter('firmware_version_timeout', 0.5)
         self.declare_parameter('odom_frame_id', 'odom')
         self.declare_parameter('base_frame_id', 'base_footprint')
         self.declare_parameter('imu_frame_id', 'imu_link')
@@ -35,10 +43,14 @@ class ChassisDriver(Node):
         self.port = self.get_parameter('port').value
         self.baudrate = int(self.get_parameter('baudrate').value)
         self.wheelbase = float(self.get_parameter('wheelbase').value)
-        self.max_speed = abs(float(self.get_parameter('max_speed').value))
+        self.max_speed = self.resolve_max_speed(
+            self.get_parameter('max_speed').value,
+            self.get_parameter('speed_mode').value,
+        )
         self.max_steering_angle = abs(float(self.get_parameter('max_steering_angle').value))
         self.cmd_timeout = float(self.get_parameter('cmd_timeout').value)
         self.reconnect_interval = float(self.get_parameter('reconnect_interval').value)
+        self.firmware_version_timeout = float(self.get_parameter('firmware_version_timeout').value)
         self.odom_frame_id = self.get_parameter('odom_frame_id').value
         self.base_frame_id = self.get_parameter('base_frame_id').value
         self.imu_frame_id = self.get_parameter('imu_frame_id').value
@@ -64,9 +76,11 @@ class ChassisDriver(Node):
         self.serial_lock = threading.Lock()
         self.reader_thread = None
         self.last_cmd_time = self.get_clock().now()
+        self.remote_control_active = None
 
         self.create_timer(self.reconnect_interval, self.ensure_connected)
         self.create_timer(0.1, self.watchdog_check)
+        self.get_logger().info(f"ROS speed limit: {self.max_speed:.3f} m/s")
         self.ensure_connected()
 
     def ensure_connected(self):
@@ -95,6 +109,7 @@ class ChassisDriver(Node):
         self.get_logger().info(f"Connected to chassis on {self.port}")
 
     def configure_device(self):
+        self.log_firmware_version()
         self.write_raw(self._device_mode_command())
         self.write_raw(self._state_request_command())
 
@@ -105,6 +120,61 @@ class ChassisDriver(Node):
     @staticmethod
     def _state_request_command():
         return chr(115) + '\n'
+
+    @staticmethod
+    def _quiet_command():
+        return ''.join(chr(value) for value in (115, 116, 114, 101, 97, 109, 32, 111, 102, 102, 10))
+
+    @staticmethod
+    def _version_command():
+        return ''.join(chr(value) for value in (102, 119, 32, 118, 101, 114, 115, 105, 111, 110, 10))
+
+    def log_firmware_version(self):
+        with self.serial_lock:
+            conn = self.serial_conn
+            if conn is None or not conn.is_open:
+                return
+            try:
+                conn.reset_input_buffer()
+                conn.write(self._quiet_command().encode('utf-8'))
+                conn.flush()
+                time.sleep(0.05)
+                conn.reset_input_buffer()
+                conn.write(self._version_command().encode('utf-8'))
+                conn.flush()
+            except (serial.SerialException, OSError, ValueError) as exc:
+                self.get_logger().warning(f"Could not query chassis firmware version: {exc}")
+                return
+
+        deadline = time.monotonic() + max(0.1, self.firmware_version_timeout)
+        while time.monotonic() < deadline:
+            with self.serial_lock:
+                conn = self.serial_conn
+                if conn is None or not conn.is_open:
+                    return
+                try:
+                    line = conn.readline().decode('utf-8', errors='ignore').strip()
+                except (serial.SerialException, OSError, ValueError) as exc:
+                    self.get_logger().warning(f"Could not read chassis firmware version: {exc}")
+                    return
+            if not line:
+                continue
+            project_ver = self.parse_project_version(line)
+            if project_ver:
+                self.get_logger().info(f"Chassis firmware ProjectVer: {project_ver}")
+                return
+
+        self.get_logger().warning("Chassis firmware version unavailable")
+
+    @staticmethod
+    def parse_project_version(line):
+        match = re.search(r'\bProjectVer\s*[:=]\s*([^,\s]+)', line)
+        if match:
+            return match.group(1)
+        match = re.search(r'\bProjectVer\s+([^,\s]+)', line)
+        if match:
+            return match.group(1)
+        return None
 
     def start_reader(self):
         if self.reader_thread and self.reader_thread.is_alive():
@@ -183,8 +253,23 @@ class ChassisDriver(Node):
                 self.publish_motion_state(parts)
             elif parts[0] == 'b' and len(parts) == 2:
                 self.publish_battery(float(parts[1]))
+            elif parts[0] == 'r' and len(parts) >= 8:
+                self.update_control_source(parts)
         except ValueError as exc:
             self.get_logger().warning(f"Could not parse chassis data: {exc}")
+
+    def update_control_source(self, parts):
+        control_channel = int(parts[7])
+        remote_active = 0 <= control_channel < 1500
+        if remote_active == self.remote_control_active:
+            return
+        self.remote_control_active = remote_active
+        if remote_active:
+            self.get_logger().warning(
+                "Remote control is active; ROS motion commands may be ignored until serial control is selected"
+            )
+        else:
+            self.get_logger().info("Serial control is active")
 
     def publish_motion_state(self, parts):
         px, py, pz = float(parts[1]), float(parts[2]), float(parts[3])
@@ -254,6 +339,15 @@ class ChassisDriver(Node):
     @staticmethod
     def clamp(value, lower, upper):
         return max(lower, min(upper, value))
+
+    def resolve_max_speed(self, max_speed, speed_mode):
+        speed = min(abs(float(max_speed)), MAX_ALLOWED_SPEED)
+        mode = str(speed_mode).strip().lower()
+        if mode == 'low':
+            return speed * LOW_SPEED_RATIO
+        if mode != 'high':
+            self.get_logger().warning(f"Unknown speed_mode '{speed_mode}', using high")
+        return speed
 
     @staticmethod
     def as_bool(value):

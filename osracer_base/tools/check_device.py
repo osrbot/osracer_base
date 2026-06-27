@@ -1,4 +1,5 @@
 import glob
+import subprocess
 from pathlib import Path
 
 
@@ -7,6 +8,7 @@ def main():
     print(f'Checking OSRacer device: {device}')
     if device.exists():
         print(device.resolve())
+        print_udev_info(device)
         return
 
     print(f'MISSING {device}')
@@ -19,6 +21,24 @@ def main():
         print('No /dev/ttyACM* or /dev/ttyUSB* devices found.')
     print('Install the udev rule, then reconnect the vehicle USB cable.')
     raise SystemExit(1)
+
+
+def print_udev_info(device):
+    try:
+        result = subprocess.run(
+            ['udevadm', 'info', '--query=property', '--name', str(device)],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+    except FileNotFoundError:
+        return
+
+    wanted = ('ID_VENDOR_ID=', 'ID_MODEL_ID=', 'ID_SERIAL_SHORT=', 'ID_MODEL=', 'ID_VENDOR=')
+    for line in result.stdout.splitlines():
+        if line.startswith(wanted):
+            print(line)
 
 
 if __name__ == '__main__':
