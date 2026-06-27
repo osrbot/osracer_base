@@ -1,14 +1,14 @@
 Panels:
-  - Class: rviz_common/Displays
+  - Class: rviz/Displays
     Name: Displays
-  - Class: rviz_common/Views
+  - Class: rviz/Views
     Name: Views
 Visualization Manager:
   Class: ""
   Displays:
     - Alpha: 0.5
       Cell Size: 1
-      Class: rviz_default_plugins/Grid
+      Class: rviz/Grid
       Color: 160; 160; 164
       Enabled: true
       Name: Grid
@@ -16,7 +16,7 @@ Visualization Manager:
       Plane Cell Count: 20
       Reference Frame: odom
       Value: true
-    - Class: rviz_default_plugins/TF
+    - Class: rviz/TF
       Enabled: true
       Frame Timeout: 15
       Frames:
@@ -32,7 +32,7 @@ Visualization Manager:
             {}
       Update Interval: 0
       Value: true
-    - Class: rviz_default_plugins/Odometry
+    - Class: rviz/Odometry
       Color: 25; 255; 0
       Covariance:
         Orientation:
@@ -57,26 +57,6 @@ Visualization Manager:
       Topic:
         Value: /odom
       Value: true
-    - Class: rviz_default_plugins/Imu
-      Acceleration properties:
-        Alpha: 1
-        Color: 255; 0; 0
-        Scale: 0.2
-        Value: true
-      Axes properties:
-        Alpha: 1
-        Scale: 0.3
-        Value: true
-      Box properties:
-        Alpha: 1
-        Color: 255; 255; 255
-        Scale: 0.1
-        Value: true
-      Enabled: true
-      Name: IMU
-      Topic:
-        Value: /imu/data
-      Value: true
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
@@ -84,13 +64,13 @@ Visualization Manager:
     Frame Rate: 30
   Name: root
   Tools:
-    - Class: rviz_default_plugins/Interact
-    - Class: rviz_default_plugins/MoveCamera
-    - Class: rviz_default_plugins/Select
+    - Class: rviz/Interact
+    - Class: rviz/MoveCamera
+    - Class: rviz/Select
   Value: true
   Views:
     Current:
-      Class: rviz_default_plugins/Orbit
+      Class: rviz/Orbit
       Distance: 8
       Focal Point:
         X: 0

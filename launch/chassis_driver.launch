@@ -1,0 +1,33 @@
+<launch>
+  <arg name="port" default="/dev/osrbot_base"/>
+  <arg name="baudrate" default="460800"/>
+  <arg name="wheelbase" default="0.325"/>
+  <arg name="max_speed" default="1.5"/>
+  <arg name="speed_mode" default="high"/>
+  <arg name="max_steering_angle" default="0.5235987756"/>
+  <arg name="cmd_timeout" default="0.5"/>
+  <arg name="firmware_version_timeout" default="0.5"/>
+  <arg name="connection_status_enabled" default="true"/>
+  <arg name="connection_refresh_period" default="1.0"/>
+  <arg name="odom_frame_id" default="odom"/>
+  <arg name="base_frame_id" default="base_footprint"/>
+  <arg name="imu_frame_id" default="imu_link"/>
+  <arg name="publish_tf" default="true"/>
+
+  <node pkg="osracer_base" type="chassis_driver.py" name="osracer_base" output="screen">
+    <param name="port" value="$(arg port)"/>
+    <param name="baudrate" value="$(arg baudrate)"/>
+    <param name="wheelbase" value="$(arg wheelbase)"/>
+    <param name="max_speed" value="$(arg max_speed)"/>
+    <param name="speed_mode" value="$(arg speed_mode)"/>
+    <param name="max_steering_angle" value="$(arg max_steering_angle)"/>
+    <param name="cmd_timeout" value="$(arg cmd_timeout)"/>
+    <param name="firmware_version_timeout" value="$(arg firmware_version_timeout)"/>
+    <param name="connection_status_enabled" value="$(arg connection_status_enabled)"/>
+    <param name="connection_refresh_period" value="$(arg connection_refresh_period)"/>
+    <param name="odom_frame_id" value="$(arg odom_frame_id)"/>
+    <param name="base_frame_id" value="$(arg base_frame_id)"/>
+    <param name="imu_frame_id" value="$(arg imu_frame_id)"/>
+    <param name="publish_tf" value="$(arg publish_tf)"/>
+  </node>
+</launch>

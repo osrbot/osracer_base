@@ -1,65 +1,59 @@
 # OSRacer Base
 
-OSRacer Base 是 OSRacer 的 ROS 2 基础底盘驱动包。它提供速度控制、阿克曼控制、里程计、IMU 和电池状态话题，适合在实车上接入上层导航、遥控或自动驾驶节点。
+当前分支适用于 ROS 1 Noetic；ROS 2 用户请切换到 `ros2` 分支。
+
+OSRacer Base 是 OSRacer 的 ROS 1 基础底盘驱动包。它提供速度控制、阿克曼控制、里程计、IMU 和电池状态话题，适合在实车上接入上层导航、遥控或自动驾驶节点。
 
 ## 支持环境
 
-- Ubuntu 22.04 + ROS 2 Humble，或 Ubuntu 24.04 + ROS 2 Jazzy
+- Ubuntu 20.04 + ROS 1 Noetic
 - Python 3
 - 可访问 OSRacer 底盘 USB 串口
 - ROS 依赖包：
-  - `rclpy`
+  - `rospy`
   - `geometry_msgs`
   - `ackermann_msgs`
   - `nav_msgs`
+  - `rospkg`
   - `sensor_msgs`
   - `tf2_ros`
-  - `ros2launch`
-  - `rviz2`
+  - `roslaunch`
+  - `rviz`
 - 系统依赖：
   - `python3-serial`
 
 Ubuntu 下需要安装 OSRacer udev 规则，并把当前用户加入 `dialout` 组：
 
 ```bash
-ros2 run osracer_base install_udev_rules
+rosrun osracer_base install_udev_rules.py
 ```
 
 安装后重新插拔车辆 USB 线。如果脚本修改了用户组，重新登录系统后生效。
 
 ## 安装依赖
 
-Humble:
-
 ```bash
 sudo apt update
-sudo apt install ros-humble-ackermann-msgs ros-humble-rviz2 python3-serial udev
-```
-
-Jazzy:
-
-```bash
-sudo apt update
-sudo apt install ros-jazzy-ackermann-msgs ros-jazzy-rviz2 python3-serial udev
+sudo apt install ros-noetic-ackermann-msgs ros-noetic-rviz python3-rospkg python3-serial udev
 ```
 
 ## 构建
 
-把本仓库放到 ROS 2 工作空间的 `src` 目录下：
+把本仓库放到 catkin 工作空间的 `src` 目录下：
 
 ```bash
 mkdir -p ~/osracer_ws/src
 cd ~/osracer_ws/src
-git clone <repo-url> osracer_base
+git clone -b ros1 <repo-url> osracer_base
 cd ~/osracer_ws
-colcon build --symlink-install
-source install/setup.bash
+catkin_make
+source devel/setup.bash
 ```
 
 ## 启动
 
 ```bash
-ros2 launch osracer_base chassis_driver.launch.py
+roslaunch osracer_base chassis_driver.launch
 ```
 
 启动成功后，驱动会在日志中打印底盘固件 `ProjectVer`，并维护底盘的 ROS 连接状态提示。如果遥控器处于优先控制状态，驱动会提示 ROS 运动指令可能暂时不会生效。
@@ -67,19 +61,19 @@ ros2 launch osracer_base chassis_driver.launch.py
 默认设备路径是 `/dev/osrbot_base`。如果现场设备路径不同，可以手动覆盖：
 
 ```bash
-ros2 launch osracer_base chassis_driver.launch.py port:=/dev/ttyACM0
+roslaunch osracer_base chassis_driver.launch port:=/dev/ttyACM0
 ```
 
 查看里程计和 TF：
 
 ```bash
-ros2 launch osracer_base odom_view.launch.py
+roslaunch osracer_base odom_view.launch
 ```
 
 发布 SLAM 常用静态 TF 示例：
 
 ```bash
-ros2 launch osracer_base description.launch.py
+roslaunch osracer_base description.launch
 ```
 
 该示例会补充 `base_footprint`、`base_link`、`imu_link` 和 `laser_frame` 之间的静态坐标关系。激光雷达实际安装位置不同的话，可以用 `laser_x`、`laser_y`、`laser_z`、`laser_yaw` 覆盖。
@@ -90,23 +84,23 @@ ros2 launch osracer_base description.launch.py
 
 ```text
 /cmd_vel
-geometry_msgs/msg/Twist
+geometry_msgs/Twist
 
 /ackermann_cmd
-ackermann_msgs/msg/AckermannDriveStamped
+ackermann_msgs/AckermannDriveStamped
 ```
 
 发布：
 
 ```text
 /odom
-nav_msgs/msg/Odometry
+nav_msgs/Odometry
 
 /imu/data
-sensor_msgs/msg/Imu
+sensor_msgs/Imu
 
 /battery_state
-sensor_msgs/msg/BatteryState
+sensor_msgs/BatteryState
 ```
 
 两个控制话题可以同时存在，驱动会执行最近收到的控制指令。超过 `cmd_timeout` 没有新指令时，车辆会自动停车。
@@ -135,27 +129,27 @@ sensor_msgs/msg/BatteryState
 速度控制：
 
 ```bash
-ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist \
+rostopic pub -1 /cmd_vel geometry_msgs/Twist \
 "{linear: {x: 0.3}, angular: {z: 0.0}}"
 ```
 
 阿克曼控制：
 
 ```bash
-ros2 topic pub --once /ackermann_cmd ackermann_msgs/msg/AckermannDriveStamped \
+rostopic pub -1 /ackermann_cmd ackermann_msgs/AckermannDriveStamped \
 "{drive: {speed: 0.3, steering_angle: 0.1}}"
 ```
 
 查看电池状态：
 
 ```bash
-ros2 topic echo /battery_state
+rostopic echo /battery_state
 ```
 
 检查设备绑定：
 
 ```bash
-ros2 run osracer_base check_device
+rosrun osracer_base check_device.py
 ```
 
 ## 状态提示与排查
@@ -163,4 +157,4 @@ ros2 run osracer_base check_device
 - 启动时应能在 ROS 日志中看到 `Connected to chassis` 和 `Chassis firmware ProjectVer`。
 - 车辆上电后低压告警由底盘独立处理；如果电池电压持续过低，车辆会有声音和灯光提示，并停止执行运动输出。
 - 如果 ROS 节点退出或 USB 连接异常，底盘会进入连接丢失提示状态；重新启动节点或重新插拔 USB 后应恢复。
-- 如果没有底盘状态提示，先检查 `ros2 run osracer_base check_device`，再确认启动日志里是否打印了固件版本。
+- 如果没有底盘状态提示，先检查 `rosrun osracer_base check_device.py`，再确认启动日志里是否打印了固件版本。

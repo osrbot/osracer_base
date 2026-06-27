@@ -3,8 +3,6 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from ament_index_python.packages import PackageNotFoundError, get_package_share_directory
-
 
 RULE_NAME = '99-osrbot-osracer.rules'
 
@@ -27,8 +25,10 @@ def main():
 
 def find_rule_file():
     try:
-        return Path(get_package_share_directory('osracer_base')) / 'udev' / RULE_NAME
-    except PackageNotFoundError:
+        import rospkg
+
+        return Path(rospkg.RosPack().get_path('osracer_base')) / 'udev' / RULE_NAME
+    except Exception:
         return Path(__file__).resolve().parents[2] / 'udev' / RULE_NAME
 
 

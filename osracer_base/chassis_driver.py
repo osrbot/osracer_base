@@ -4,91 +4,68 @@ import re
 import threading
 import time
 
-import rclpy
+import rospy
+import serial
 from ackermann_msgs.msg import AckermannDriveStamped
 from geometry_msgs.msg import TransformStamped, Twist
 from nav_msgs.msg import Odometry
-from rclpy.node import Node
-from rclpy.qos import QoSProfile
 from sensor_msgs.msg import BatteryState, Imu
 from tf2_ros import TransformBroadcaster
-
-import serial
 
 
 MAX_ALLOWED_SPEED = 1.5
 LOW_SPEED_RATIO = 0.15
 
 
-class ChassisDriver(Node):
+class ChassisDriver:
     def __init__(self):
-        super().__init__('osracer_base')
+        rospy.init_node('osracer_base')
 
-        self.declare_parameter('port', '/dev/osrbot_base')
-        self.declare_parameter('baudrate', 460800)
-        self.declare_parameter('wheelbase', 0.325)
-        self.declare_parameter('max_speed', MAX_ALLOWED_SPEED)
-        self.declare_parameter('speed_mode', 'high')
-        self.declare_parameter('max_steering_angle', math.radians(30.0))
-        self.declare_parameter('cmd_timeout', 0.5)
-        self.declare_parameter('reconnect_interval', 2.0)
-        self.declare_parameter('firmware_version_timeout', 0.5)
-        self.declare_parameter('connection_status_enabled', True)
-        self.declare_parameter('connection_refresh_period', 1.0)
-        self.declare_parameter('odom_frame_id', 'odom')
-        self.declare_parameter('base_frame_id', 'base_footprint')
-        self.declare_parameter('imu_frame_id', 'imu_link')
-        self.declare_parameter('publish_tf', True)
-        self.declare_parameter('battery_voltage_min', 10.8)
-        self.declare_parameter('battery_voltage_max', 12.6)
-
-        self.port = self.get_parameter('port').value
-        self.baudrate = int(self.get_parameter('baudrate').value)
-        self.wheelbase = float(self.get_parameter('wheelbase').value)
+        self.port = rospy.get_param('~port', '/dev/osrbot_base')
+        self.baudrate = int(rospy.get_param('~baudrate', 460800))
+        self.wheelbase = float(rospy.get_param('~wheelbase', 0.325))
         self.max_speed = self.resolve_max_speed(
-            self.get_parameter('max_speed').value,
-            self.get_parameter('speed_mode').value,
+            rospy.get_param('~max_speed', MAX_ALLOWED_SPEED),
+            rospy.get_param('~speed_mode', 'high'),
         )
-        self.max_steering_angle = abs(float(self.get_parameter('max_steering_angle').value))
-        self.cmd_timeout = float(self.get_parameter('cmd_timeout').value)
-        self.reconnect_interval = float(self.get_parameter('reconnect_interval').value)
-        self.firmware_version_timeout = float(self.get_parameter('firmware_version_timeout').value)
-        self.connection_status_enabled = self.as_bool(self.get_parameter('connection_status_enabled').value)
-        self.connection_refresh_period = float(self.get_parameter('connection_refresh_period').value)
-        self.odom_frame_id = self.get_parameter('odom_frame_id').value
-        self.base_frame_id = self.get_parameter('base_frame_id').value
-        self.imu_frame_id = self.get_parameter('imu_frame_id').value
-        self.publish_tf = self.as_bool(self.get_parameter('publish_tf').value)
-        self.battery_voltage_min = float(self.get_parameter('battery_voltage_min').value)
-        self.battery_voltage_max = float(self.get_parameter('battery_voltage_max').value)
+        self.max_steering_angle = abs(float(rospy.get_param('~max_steering_angle', math.radians(30.0))))
+        self.cmd_timeout = float(rospy.get_param('~cmd_timeout', 0.5))
+        self.reconnect_interval = float(rospy.get_param('~reconnect_interval', 2.0))
+        self.firmware_version_timeout = float(rospy.get_param('~firmware_version_timeout', 0.5))
+        self.connection_status_enabled = self.as_bool(rospy.get_param('~connection_status_enabled', True))
+        self.connection_refresh_period = float(rospy.get_param('~connection_refresh_period', 1.0))
+        self.odom_frame_id = rospy.get_param('~odom_frame_id', 'odom')
+        self.base_frame_id = rospy.get_param('~base_frame_id', 'base_footprint')
+        self.imu_frame_id = rospy.get_param('~imu_frame_id', 'imu_link')
+        self.publish_tf = self.as_bool(rospy.get_param('~publish_tf', True))
+        self.battery_voltage_min = float(rospy.get_param('~battery_voltage_min', 10.8))
+        self.battery_voltage_max = float(rospy.get_param('~battery_voltage_max', 12.6))
 
-        qos_fast = QoSProfile(depth=1)
-        qos_normal = QoSProfile(depth=5)
-        self.create_subscription(Twist, 'cmd_vel', self.cmd_vel_callback, qos_normal)
-        self.create_subscription(
-            AckermannDriveStamped,
-            'ackermann_cmd',
-            self.ackermann_cmd_callback,
-            qos_normal,
-        )
-        self.odom_pub = self.create_publisher(Odometry, 'odom', qos_fast)
-        self.imu_pub = self.create_publisher(Imu, 'imu/data', qos_fast)
-        self.battery_pub = self.create_publisher(BatteryState, 'battery_state', qos_normal)
-        self.tf_broadcaster = TransformBroadcaster(self) if self.publish_tf else None
+        rospy.Subscriber('cmd_vel', Twist, self.cmd_vel_callback, queue_size=5)
+        rospy.Subscriber('ackermann_cmd', AckermannDriveStamped, self.ackermann_cmd_callback, queue_size=5)
+        self.odom_pub = rospy.Publisher('odom', Odometry, queue_size=1)
+        self.imu_pub = rospy.Publisher('imu/data', Imu, queue_size=1)
+        self.battery_pub = rospy.Publisher('battery_state', BatteryState, queue_size=5)
+        self.tf_broadcaster = TransformBroadcaster() if self.publish_tf else None
 
         self.serial_conn = None
         self.serial_lock = threading.Lock()
         self.reader_thread = None
-        self.last_cmd_time = self.get_clock().now()
+        self.last_cmd_time = rospy.Time.now()
         self.remote_control_active = None
 
-        self.create_timer(self.reconnect_interval, self.ensure_connected)
-        self.create_timer(0.1, self.watchdog_check)
-        self.create_timer(max(0.2, self.connection_refresh_period), self.refresh_connection_status)
-        self.get_logger().info(f"ROS speed limit: {self.max_speed:.3f} m/s")
+        rospy.Timer(rospy.Duration(self.reconnect_interval), self.ensure_connected)
+        rospy.Timer(rospy.Duration(0.1), self.watchdog_check)
+        rospy.Timer(
+            rospy.Duration(max(0.2, self.connection_refresh_period)),
+            self.refresh_connection_status,
+        )
+        rospy.on_shutdown(self.close_serial)
+
+        rospy.loginfo("ROS speed limit: %.3f m/s", self.max_speed)
         self.ensure_connected()
 
-    def ensure_connected(self):
+    def ensure_connected(self, event=None):
         with self.serial_lock:
             connected = self.serial_conn is not None and self.serial_conn.is_open
         if connected:
@@ -96,7 +73,7 @@ class ChassisDriver(Node):
             return
 
         if self.port.startswith('/') and not os.path.exists(self.port):
-            self.get_logger().warning(f"Serial device not found: {self.port}")
+            rospy.logwarn("Serial device not found: %s", self.port)
             return
 
         try:
@@ -104,14 +81,14 @@ class ChassisDriver(Node):
             conn.reset_input_buffer()
             conn.reset_output_buffer()
         except (serial.SerialException, OSError, ValueError) as exc:
-            self.get_logger().warning(f"Could not open serial device {self.port}: {exc}")
+            rospy.logwarn("Could not open serial device %s: %s", self.port, exc)
             return
 
         with self.serial_lock:
             self.serial_conn = conn
         self.configure_device()
         self.start_reader()
-        self.get_logger().info(f"Connected to chassis on {self.port}")
+        rospy.loginfo("Connected to chassis on %s", self.port)
 
     def configure_device(self):
         self.log_firmware_version()
@@ -149,11 +126,11 @@ class ChassisDriver(Node):
                 conn.write(self._version_command().encode('utf-8'))
                 conn.flush()
             except (serial.SerialException, OSError, ValueError) as exc:
-                self.get_logger().warning(f"Could not query chassis firmware version: {exc}")
+                rospy.logwarn("Could not query chassis firmware version: %s", exc)
                 return
 
         deadline = time.monotonic() + max(0.1, self.firmware_version_timeout)
-        while time.monotonic() < deadline:
+        while time.monotonic() < deadline and not rospy.is_shutdown():
             with self.serial_lock:
                 conn = self.serial_conn
                 if conn is None or not conn.is_open:
@@ -161,16 +138,16 @@ class ChassisDriver(Node):
                 try:
                     line = conn.readline().decode('utf-8', errors='ignore').strip()
                 except (serial.SerialException, OSError, ValueError) as exc:
-                    self.get_logger().warning(f"Could not read chassis firmware version: {exc}")
+                    rospy.logwarn("Could not read chassis firmware version: %s", exc)
                     return
             if not line:
                 continue
             project_ver = self.parse_project_version(line)
             if project_ver:
-                self.get_logger().info(f"Chassis firmware ProjectVer: {project_ver}")
+                rospy.loginfo("Chassis firmware ProjectVer: %s", project_ver)
                 return
 
-        self.get_logger().warning("Chassis firmware version unavailable")
+        rospy.logwarn("Chassis firmware version unavailable")
 
     @staticmethod
     def parse_project_version(line):
@@ -185,7 +162,8 @@ class ChassisDriver(Node):
     def start_reader(self):
         if self.reader_thread and self.reader_thread.is_alive():
             return
-        self.reader_thread = threading.Thread(target=self.read_loop, daemon=True)
+        self.reader_thread = threading.Thread(target=self.read_loop)
+        self.reader_thread.daemon = True
         self.reader_thread.start()
 
     def close_serial(self):
@@ -205,7 +183,7 @@ class ChassisDriver(Node):
             return True
         return self.write_raw(self._connection_status_command(state))
 
-    def refresh_connection_status(self):
+    def refresh_connection_status(self, event=None):
         with self.serial_lock:
             connected = self.serial_conn is not None and self.serial_conn.is_open
         if connected:
@@ -240,6 +218,7 @@ class ChassisDriver(Node):
         return tuple(''.join(chr(value) for value in item) for item in values)
 
     def write_raw(self, command):
+        failed_conn = None
         with self.serial_lock:
             conn = self.serial_conn
             if conn is None or not conn.is_open:
@@ -249,9 +228,14 @@ class ChassisDriver(Node):
                 conn.flush()
                 return True
             except (serial.SerialException, OSError, ValueError) as exc:
-                self.get_logger().warning(f"Serial write failed: {exc}")
+                rospy.logwarn("Serial write failed: %s", exc)
+                failed_conn = conn
                 self.serial_conn = None
-        self.close_serial()
+        if failed_conn:
+            try:
+                failed_conn.close()
+            except (serial.SerialException, OSError):
+                pass
         return False
 
     def cmd_vel_callback(self, msg):
@@ -269,12 +253,12 @@ class ChassisDriver(Node):
         speed = self.clamp(float(speed), -self.max_speed, self.max_speed)
         steering = self.clamp(float(steering), -self.max_steering_angle, self.max_steering_angle)
         if self.write_raw(f"v {speed:.3f} {math.degrees(steering):.2f}\n"):
-            self.last_cmd_time = self.get_clock().now()
+            self.last_cmd_time = rospy.Time.now()
 
     def read_loop(self):
         current_thread = threading.current_thread()
         try:
-            while rclpy.ok():
+            while not rospy.is_shutdown():
                 with self.serial_lock:
                     conn = self.serial_conn
                 if conn is None or not conn.is_open:
@@ -282,7 +266,7 @@ class ChassisDriver(Node):
                 try:
                     line = conn.readline().decode('utf-8', errors='ignore').strip()
                 except (serial.SerialException, OSError, ValueError) as exc:
-                    self.get_logger().warning(f"Serial read failed: {exc}")
+                    rospy.logwarn("Serial read failed: %s", exc)
                     self.close_serial()
                     break
                 if line:
@@ -305,7 +289,7 @@ class ChassisDriver(Node):
             elif parts[0] in self._ignored_response_prefixes():
                 return
         except ValueError as exc:
-            self.get_logger().warning(f"Could not parse chassis data: {exc}")
+            rospy.logwarn("Could not parse chassis data: %s", exc)
 
     def update_control_source(self, parts):
         control_channel = int(parts[7])
@@ -314,11 +298,9 @@ class ChassisDriver(Node):
             return
         self.remote_control_active = remote_active
         if remote_active:
-            self.get_logger().warning(
-                "Remote control is active; ROS motion commands may be ignored until serial control is selected"
-            )
+            rospy.logwarn("Remote control is active; ROS motion commands may be ignored until serial control is selected")
         else:
-            self.get_logger().info("Serial control is active")
+            rospy.loginfo("Serial control is active")
 
     def publish_motion_state(self, parts):
         px, py, pz = float(parts[1]), float(parts[2]), float(parts[3])
@@ -327,7 +309,7 @@ class ChassisDriver(Node):
         ax, ay, az = float(parts[12]), float(parts[13]), float(parts[14])
         gx, gy, gz = float(parts[15]), float(parts[16]), float(parts[17])
 
-        stamp = self.get_clock().now().to_msg()
+        stamp = rospy.Time.now()
 
         odom = Odometry()
         odom.header.stamp = stamp
@@ -373,15 +355,15 @@ class ChassisDriver(Node):
 
     def publish_battery(self, voltage):
         msg = BatteryState()
-        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.stamp = rospy.Time.now()
         msg.voltage = voltage
         if self.battery_voltage_max > self.battery_voltage_min:
             pct = (voltage - self.battery_voltage_min) / (self.battery_voltage_max - self.battery_voltage_min)
             msg.percentage = self.clamp(pct, 0.0, 1.0)
         self.battery_pub.publish(msg)
 
-    def watchdog_check(self):
-        elapsed = (self.get_clock().now() - self.last_cmd_time).nanoseconds / 1e9
+    def watchdog_check(self, event=None):
+        elapsed = (rospy.Time.now() - self.last_cmd_time).to_sec()
         if elapsed > self.cmd_timeout:
             self.write_raw("v 0.000 0.00\n")
 
@@ -389,33 +371,25 @@ class ChassisDriver(Node):
     def clamp(value, lower, upper):
         return max(lower, min(upper, value))
 
-    def resolve_max_speed(self, max_speed, speed_mode):
-        speed = min(abs(float(max_speed)), MAX_ALLOWED_SPEED)
-        mode = str(speed_mode).strip().lower()
-        if mode == 'low':
-            return speed * LOW_SPEED_RATIO
-        if mode != 'high':
-            self.get_logger().warning(f"Unknown speed_mode '{speed_mode}', using high")
-        return speed
-
     @staticmethod
     def as_bool(value):
         if isinstance(value, bool):
             return value
         return str(value).strip().lower() in ('1', 'true', 'yes', 'on')
 
+    def resolve_max_speed(self, max_speed, speed_mode):
+        speed = min(abs(float(max_speed)), MAX_ALLOWED_SPEED)
+        mode = str(speed_mode).strip().lower()
+        if mode == 'low':
+            return speed * LOW_SPEED_RATIO
+        if mode != 'high':
+            rospy.logwarn("Unknown speed_mode '%s', using high", speed_mode)
+        return speed
 
-def main(args=None):
-    rclpy.init(args=args)
-    node = ChassisDriver()
-    try:
-        rclpy.spin(node)
-    except KeyboardInterrupt:
-        pass
-    finally:
-        node.close_serial()
-        node.destroy_node()
-        rclpy.shutdown()
+
+def main():
+    ChassisDriver()
+    rospy.spin()
 
 
 if __name__ == '__main__':

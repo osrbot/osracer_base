@@ -1,31 +1,9 @@
-from glob import glob
-from setuptools import find_packages, setup
+from catkin_pkg.python_setup import generate_distutils_setup
+from distutils.core import setup
 
-package_name = 'osracer_base'
-
-setup(
-    name=package_name,
-    version='0.1.0',
-    packages=find_packages(exclude=['test']),
-    data_files=[
-        ('share/ament_index/resource_index/packages', [f'resource/{package_name}']),
-        (f'share/{package_name}', ['package.xml', 'README.md', 'README_zh.md']),
-        (f'share/{package_name}/launch', glob('launch/*.launch.py')),
-        (f'share/{package_name}/rviz', glob('rviz/*.rviz')),
-        (f'share/{package_name}/scripts', glob('scripts/*')),
-        (f'share/{package_name}/udev', glob('udev/*.rules')),
-    ],
-    install_requires=['setuptools'],
-    zip_safe=True,
-    maintainer='osrbot',
-    maintainer_email='osrbot@osrbot.com',
-    description='Minimal ROS 2 chassis driver for OSRacer.',
-    license='MIT',
-    entry_points={
-        'console_scripts': [
-            'chassis_driver = osracer_base.chassis_driver:main',
-            'check_device = osracer_base.tools.check_device:main',
-            'install_udev_rules = osracer_base.tools.install_udev_rules:main',
-        ],
-    },
+setup_args = generate_distutils_setup(
+    packages=['osracer_base', 'osracer_base.tools'],
+    package_dir={'': '.'},
 )
+
+setup(**setup_args)

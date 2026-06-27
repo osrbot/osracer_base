@@ -32,5 +32,5 @@ echo "Available serial devices:"
 ls /dev/ttyACM* /dev/ttyUSB* 2>/dev/null || true
 echo
 echo "If the vehicle is connected, install the udev rule and reconnect USB:"
-echo "  ros2 run osracer_base install_udev_rules"
+echo "  rosrun osracer_base install_udev_rules.py"
 exit 1
