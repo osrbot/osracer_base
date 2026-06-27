@@ -33,6 +33,8 @@ class ChassisDriver(Node):
         self.declare_parameter('cmd_timeout', 0.5)
         self.declare_parameter('reconnect_interval', 2.0)
         self.declare_parameter('firmware_version_timeout', 0.5)
+        self.declare_parameter('connection_status_enabled', True)
+        self.declare_parameter('connection_refresh_period', 1.0)
         self.declare_parameter('odom_frame_id', 'odom')
         self.declare_parameter('base_frame_id', 'base_footprint')
         self.declare_parameter('imu_frame_id', 'imu_link')
@@ -51,6 +53,8 @@ class ChassisDriver(Node):
         self.cmd_timeout = float(self.get_parameter('cmd_timeout').value)
         self.reconnect_interval = float(self.get_parameter('reconnect_interval').value)
         self.firmware_version_timeout = float(self.get_parameter('firmware_version_timeout').value)
+        self.connection_status_enabled = self.as_bool(self.get_parameter('connection_status_enabled').value)
+        self.connection_refresh_period = float(self.get_parameter('connection_refresh_period').value)
         self.odom_frame_id = self.get_parameter('odom_frame_id').value
         self.base_frame_id = self.get_parameter('base_frame_id').value
         self.imu_frame_id = self.get_parameter('imu_frame_id').value
@@ -80,6 +84,7 @@ class ChassisDriver(Node):
 
         self.create_timer(self.reconnect_interval, self.ensure_connected)
         self.create_timer(0.1, self.watchdog_check)
+        self.create_timer(max(0.2, self.connection_refresh_period), self.refresh_connection_status)
         self.get_logger().info(f"ROS speed limit: {self.max_speed:.3f} m/s")
         self.ensure_connected()
 
@@ -112,6 +117,7 @@ class ChassisDriver(Node):
         self.log_firmware_version()
         self.write_raw(self._device_mode_command())
         self.write_raw(self._state_request_command())
+        self.send_connection_status('up')
 
     @staticmethod
     def _device_mode_command():
@@ -188,9 +194,50 @@ class ChassisDriver(Node):
             self.serial_conn = None
         if conn:
             try:
+                if conn.is_open:
+                    self.write_connection_down(conn)
                 conn.close()
             except (serial.SerialException, OSError):
                 pass
+
+    def send_connection_status(self, state):
+        if not self.connection_status_enabled:
+            return True
+        return self.write_raw(self._connection_status_command(state))
+
+    def refresh_connection_status(self):
+        with self.serial_lock:
+            connected = self.serial_conn is not None and self.serial_conn.is_open
+        if connected:
+            self.send_connection_status('ping')
+
+    def write_connection_down(self, conn):
+        if not self.connection_status_enabled:
+            return
+        try:
+            conn.write(self._connection_status_command('down').encode('utf-8'))
+            conn.flush()
+        except (serial.SerialException, OSError, ValueError):
+            pass
+
+    @staticmethod
+    def _connection_status_command(state):
+        values = {
+            'up': (108, 105, 110, 107, 32, 117, 112, 32, 114, 111, 115, 10),
+            'ping': (108, 105, 110, 107, 32, 112, 105, 110, 103, 32, 114, 111, 115, 10),
+            'down': (108, 105, 110, 107, 32, 100, 111, 119, 110, 32, 114, 111, 115, 10),
+        }
+        return ''.join(chr(value) for value in values[state])
+
+    @staticmethod
+    def _ignored_response_prefixes():
+        values = (
+            (79, 75, 58),
+            (69, 82, 82, 79, 82, 58),
+            (70, 87, 58),
+            (68, 73, 65, 71, 58),
+        )
+        return tuple(''.join(chr(value) for value in item) for item in values)
 
     def write_raw(self, command):
         with self.serial_lock:
@@ -255,6 +302,8 @@ class ChassisDriver(Node):
                 self.publish_battery(float(parts[1]))
             elif parts[0] == 'r' and len(parts) >= 8:
                 self.update_control_source(parts)
+            elif parts[0] in self._ignored_response_prefixes():
+                return
         except ValueError as exc:
             self.get_logger().warning(f"Could not parse chassis data: {exc}")
 

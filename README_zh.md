@@ -61,7 +61,7 @@ source install/setup.bash
 ros2 launch osracer_base chassis_driver.launch.py
 ```
 
-启动成功后，驱动会在日志中打印底盘固件 `ProjectVer`。如果遥控器处于优先控制状态，驱动会提示 ROS 运动指令可能暂时不会生效。
+启动成功后，驱动会在日志中打印底盘固件 `ProjectVer`，并维护底盘的 ROS 连接状态提示。如果遥控器处于优先控制状态，驱动会提示 ROS 运动指令可能暂时不会生效。
 
 默认设备路径是 `/dev/osrbot_base`。如果现场设备路径不同，可以手动覆盖：
 
@@ -108,6 +108,8 @@ sensor_msgs/msg/BatteryState
 | `max_steering_angle` | `0.5235987756` | 最大转向角，单位 rad |
 | `cmd_timeout` | `0.5` | 控制超时时间，单位 s |
 | `firmware_version_timeout` | `0.5` | 启动时读取底盘固件版本的等待时间，单位 s |
+| `connection_status_enabled` | `true` | 是否维护底盘 ROS 连接状态提示 |
+| `connection_refresh_period` | `1.0` | 连接状态刷新周期，单位 s |
 | `odom_frame_id` | `odom` | 里程计坐标系 |
 | `base_frame_id` | `base_footprint` | 车体坐标系 |
 | `imu_frame_id` | `imu_link` | IMU 坐标系 |
@@ -140,3 +142,10 @@ ros2 topic echo /battery_state
 ```bash
 ros2 run osracer_base check_device
 ```
+
+## 状态提示与排查
+
+- 启动时应能在 ROS 日志中看到 `Connected to chassis` 和 `Chassis firmware ProjectVer`。
+- 车辆上电后低压告警由底盘独立处理；如果电池电压持续过低，车辆会有声音和灯光提示，并停止执行运动输出。
+- 如果 ROS 节点退出或 USB 连接异常，底盘会进入连接丢失提示状态；重新启动节点或重新插拔 USB 后应恢复。
+- 如果没有底盘状态提示，先检查 `ros2 run osracer_base check_device`，再确认启动日志里是否打印了固件版本。

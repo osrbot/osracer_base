@@ -61,7 +61,7 @@ source install/setup.bash
 ros2 launch osracer_base chassis_driver.launch.py
 ```
 
-After startup, the driver logs the chassis firmware `ProjectVer`. If the RC transmitter is in priority control mode, the driver warns that ROS motion commands may be ignored until serial control is selected.
+After startup, the driver logs the chassis firmware `ProjectVer` and maintains the chassis ROS connection status indicator. If the RC transmitter is in priority control mode, the driver warns that ROS motion commands may be ignored until serial control is selected.
 
 The default device path is `/dev/osrbot_base`. Use a different `port` value only when needed:
 
@@ -108,6 +108,8 @@ Both control topics can be used. The driver applies the most recent command. If 
 | `max_steering_angle` | `0.5235987756` | Maximum steering angle in radians |
 | `cmd_timeout` | `0.5` | Command timeout in seconds |
 | `firmware_version_timeout` | `0.5` | Startup wait time for reading chassis firmware version, in seconds |
+| `connection_status_enabled` | `true` | Maintain chassis ROS connection status indicator |
+| `connection_refresh_period` | `1.0` | Connection status refresh period in seconds |
 | `odom_frame_id` | `odom` | Odometry frame |
 | `base_frame_id` | `base_footprint` | Vehicle base frame |
 | `imu_frame_id` | `imu_link` | IMU frame |
@@ -140,3 +142,10 @@ Device check:
 ```bash
 ros2 run osracer_base check_device
 ```
+
+## Status Indicators and Troubleshooting
+
+- On startup, the ROS log should show `Connected to chassis` and `Chassis firmware ProjectVer`.
+- Low-voltage alerts are handled by the chassis itself. If battery voltage stays too low, the vehicle uses sound and light indicators and stops motion output.
+- If the ROS node exits or USB connection is lost, the chassis enters its connection-lost indicator state. Restarting the node or reconnecting USB should recover it.
+- If chassis status indicators do not appear, run `ros2 run osracer_base check_device` first, then confirm the startup log prints the firmware version.
