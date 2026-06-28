@@ -13,8 +13,8 @@ from sensor_msgs.msg import BatteryState, Imu
 from tf2_ros import TransformBroadcaster
 
 
-MAX_ALLOWED_SPEED = 0.8
-LOW_SPEED_RATIO = 0.15
+DEFAULT_MAX_SPEED = 0.8
+LOW_SPEED_RATIO = 0.5
 
 
 class ChassisDriver:
@@ -25,7 +25,7 @@ class ChassisDriver:
         self.baudrate = int(rospy.get_param('~baudrate', 460800))
         self.wheelbase = float(rospy.get_param('~wheelbase', 0.325))
         self.max_speed = self.resolve_max_speed(
-            rospy.get_param('~max_speed', MAX_ALLOWED_SPEED),
+            rospy.get_param('~max_speed', DEFAULT_MAX_SPEED),
             rospy.get_param('~speed_mode', 'high'),
         )
         self.max_steering_angle = abs(float(rospy.get_param('~max_steering_angle', math.radians(30.0))))
@@ -378,7 +378,7 @@ class ChassisDriver:
         return str(value).strip().lower() in ('1', 'true', 'yes', 'on')
 
     def resolve_max_speed(self, max_speed, speed_mode):
-        speed = min(abs(float(max_speed)), MAX_ALLOWED_SPEED)
+        speed = abs(float(max_speed))
         mode = str(speed_mode).strip().lower()
         if mode == 'low':
             return speed * LOW_SPEED_RATIO
