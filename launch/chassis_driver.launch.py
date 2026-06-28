@@ -9,7 +9,7 @@ def generate_launch_description():
         DeclareLaunchArgument('port', default_value='/dev/osrbot_base'),
         DeclareLaunchArgument('baudrate', default_value='460800'),
         DeclareLaunchArgument('wheelbase', default_value='0.325'),
-        DeclareLaunchArgument('max_speed', default_value='1.5'),
+        DeclareLaunchArgument('max_speed', default_value='0.8'),
         DeclareLaunchArgument('speed_mode', default_value='high'),
         DeclareLaunchArgument('max_steering_angle', default_value='0.5235987756'),
         DeclareLaunchArgument('cmd_timeout', default_value='0.5'),

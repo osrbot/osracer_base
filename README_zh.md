@@ -118,8 +118,8 @@ sensor_msgs/msg/BatteryState
 | `port` | `/dev/osrbot_base` | 底盘串口设备 |
 | `baudrate` | `460800` | 串口波特率 |
 | `wheelbase` | `0.325` | B102 轴距，单位 m |
-| `max_speed` | `1.5` | ROS 控制速度上限，单位 m/s；参数填大也会限制到 `1.5` |
-| `speed_mode` | `high` | `high` 使用 `max_speed`，`low` 使用 `max_speed * 0.15` |
+| `max_speed` | 默认值 | ROS 控制速度上限，单位 m/s |
+| `speed_mode` | `high` | 速度模式，支持 `high` 和 `low` |
 | `max_steering_angle` | `0.5235987756` | 最大转向角，单位 rad |
 | `cmd_timeout` | `0.5` | 控制超时时间，单位 s |
 | `firmware_version_timeout` | `0.5` | 启动时读取底盘固件版本的等待时间，单位 s |
