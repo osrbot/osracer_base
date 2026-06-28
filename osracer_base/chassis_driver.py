@@ -16,8 +16,8 @@ from tf2_ros import TransformBroadcaster
 import serial
 
 
-MAX_ALLOWED_SPEED = 0.8
-LOW_SPEED_RATIO = 0.15
+DEFAULT_MAX_SPEED = 0.8
+LOW_SPEED_RATIO = 0.5
 
 
 class ChassisDriver(Node):
@@ -27,7 +27,7 @@ class ChassisDriver(Node):
         self.declare_parameter('port', '/dev/osrbot_base')
         self.declare_parameter('baudrate', 460800)
         self.declare_parameter('wheelbase', 0.325)
-        self.declare_parameter('max_speed', MAX_ALLOWED_SPEED)
+        self.declare_parameter('max_speed', DEFAULT_MAX_SPEED)
         self.declare_parameter('speed_mode', 'high')
         self.declare_parameter('max_steering_angle', math.radians(30.0))
         self.declare_parameter('cmd_timeout', 0.5)
@@ -390,7 +390,7 @@ class ChassisDriver(Node):
         return max(lower, min(upper, value))
 
     def resolve_max_speed(self, max_speed, speed_mode):
-        speed = min(abs(float(max_speed)), MAX_ALLOWED_SPEED)
+        speed = abs(float(max_speed))
         mode = str(speed_mode).strip().lower()
         if mode == 'low':
             return speed * LOW_SPEED_RATIO
