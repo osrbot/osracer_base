@@ -112,8 +112,8 @@ Both control topics can be used. The driver applies the most recent command. If 
 | `port` | `/dev/osrbot_base` | Chassis serial device |
 | `baudrate` | `460800` | Serial baud rate |
 | `wheelbase` | `0.325` | B102 wheelbase in meters |
-| `max_speed` | `1.5` | ROS control speed limit in m/s; larger values are capped at `1.5` |
-| `speed_mode` | `high` | `high` uses `max_speed`; `low` uses `max_speed * 0.15` |
+| `max_speed` | default | ROS control speed limit in m/s |
+| `speed_mode` | `high` | Speed mode, supports `high` and `low` |
 | `max_steering_angle` | `0.5235987756` | Maximum steering angle in radians |
 | `cmd_timeout` | `0.5` | Command timeout in seconds |
 | `firmware_version_timeout` | `0.5` | Startup wait time for reading chassis firmware version, in seconds |

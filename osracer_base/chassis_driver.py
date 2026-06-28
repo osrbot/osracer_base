@@ -13,7 +13,7 @@ from sensor_msgs.msg import BatteryState, Imu
 from tf2_ros import TransformBroadcaster
 
 
-MAX_ALLOWED_SPEED = 1.5
+MAX_ALLOWED_SPEED = 0.8
 LOW_SPEED_RATIO = 0.15
 
 
