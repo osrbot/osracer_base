@@ -1,16 +1,20 @@
 import math
 import os
 import re
+import signal
+import termios
 import threading
 import time
 
 import rclpy
-from ackermann_msgs.msg import AckermannDriveStamped
+from ackermann_msgs.msg import AckermannDrive
 from geometry_msgs.msg import TransformStamped, Twist
 from nav_msgs.msg import Odometry
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import QoSProfile
-from sensor_msgs.msg import BatteryState, Imu
+from sensor_msgs.msg import BatteryState, Imu, MagneticField
+from std_msgs.msg import Int32MultiArray
 from tf2_ros import TransformBroadcaster
 
 import serial
@@ -18,6 +22,7 @@ import serial
 
 DEFAULT_MAX_SPEED = 0.8
 LOW_SPEED_RATIO = 0.5
+SERIAL_ERRORS = (serial.SerialException, OSError, ValueError, TypeError, termios.error)
 
 
 class ChassisDriver(Node):
@@ -32,13 +37,24 @@ class ChassisDriver(Node):
         self.declare_parameter('max_steering_angle', math.radians(30.0))
         self.declare_parameter('cmd_timeout', 0.5)
         self.declare_parameter('reconnect_interval', 2.0)
-        self.declare_parameter('firmware_version_timeout', 0.5)
+        self.declare_parameter('firmware_version_timeout', 0.3)
         self.declare_parameter('connection_status_enabled', True)
         self.declare_parameter('connection_refresh_period', 1.0)
         self.declare_parameter('odom_frame_id', 'odom')
         self.declare_parameter('base_frame_id', 'base_footprint')
         self.declare_parameter('imu_frame_id', 'imu_link')
         self.declare_parameter('publish_tf', True)
+        self.declare_parameter('publish_rc', True)
+        self.declare_parameter('rc_topic', 'rc_data')
+        self.declare_parameter('publish_mag', True)
+        self.declare_parameter('mag_topic', 'magnetometer_data')
+        self.declare_parameter('mag_frame_id', 'imu_link')
+        self.declare_parameter('imu_orientation_covariance', [0.02, 0.02, 0.05])
+        self.declare_parameter('imu_angular_velocity_covariance', [0.01, 0.01, 0.01])
+        self.declare_parameter('imu_linear_acceleration_covariance', [0.10, 0.10, 0.10])
+        self.declare_parameter('odom_twist_covariance', [0.02, 0.20, 1.0, 1.0, 1.0, 0.30])
+        self.declare_parameter('publish_battery', True)
+        self.declare_parameter('battery_topic', 'battery_state')
         self.declare_parameter('battery_voltage_min', 10.8)
         self.declare_parameter('battery_voltage_max', 12.6)
 
@@ -59,6 +75,25 @@ class ChassisDriver(Node):
         self.base_frame_id = self.get_parameter('base_frame_id').value
         self.imu_frame_id = self.get_parameter('imu_frame_id').value
         self.publish_tf = self.as_bool(self.get_parameter('publish_tf').value)
+        self.publish_rc_enabled = self.as_bool(self.get_parameter('publish_rc').value)
+        self.rc_topic = self.get_parameter('rc_topic').value
+        self.publish_mag_enabled = self.as_bool(self.get_parameter('publish_mag').value)
+        self.mag_topic = self.get_parameter('mag_topic').value
+        self.mag_frame_id = self.get_parameter('mag_frame_id').value
+        self.imu_orientation_covariance = self.diagonal_covariance(
+            self.get_parameter('imu_orientation_covariance').value
+        )
+        self.imu_angular_velocity_covariance = self.diagonal_covariance(
+            self.get_parameter('imu_angular_velocity_covariance').value
+        )
+        self.imu_linear_acceleration_covariance = self.diagonal_covariance(
+            self.get_parameter('imu_linear_acceleration_covariance').value
+        )
+        self.odom_twist_covariance = self.diagonal_covariance_6d(
+            self.get_parameter('odom_twist_covariance').value
+        )
+        self.publish_battery_enabled = self.as_bool(self.get_parameter('publish_battery').value)
+        self.battery_topic = self.get_parameter('battery_topic').value
         self.battery_voltage_min = float(self.get_parameter('battery_voltage_min').value)
         self.battery_voltage_max = float(self.get_parameter('battery_voltage_max').value)
 
@@ -66,19 +101,31 @@ class ChassisDriver(Node):
         qos_normal = QoSProfile(depth=5)
         self.create_subscription(Twist, 'cmd_vel', self.cmd_vel_callback, qos_normal)
         self.create_subscription(
-            AckermannDriveStamped,
+            AckermannDrive,
             'ackermann_cmd',
             self.ackermann_cmd_callback,
             qos_normal,
         )
         self.odom_pub = self.create_publisher(Odometry, 'odom', qos_fast)
         self.imu_pub = self.create_publisher(Imu, 'imu/data', qos_fast)
-        self.battery_pub = self.create_publisher(BatteryState, 'battery_state', qos_normal)
+        self.rc_pub = (
+            self.create_publisher(Int32MultiArray, self.rc_topic, qos_normal)
+            if self.publish_rc_enabled else None
+        )
+        self.mag_pub = (
+            self.create_publisher(MagneticField, self.mag_topic, qos_fast)
+            if self.publish_mag_enabled else None
+        )
+        self.battery_pub = (
+            self.create_publisher(BatteryState, self.battery_topic, qos_normal)
+            if self.publish_battery_enabled else None
+        )
         self.tf_broadcaster = TransformBroadcaster(self) if self.publish_tf else None
 
         self.serial_conn = None
         self.serial_lock = threading.Lock()
         self.reader_thread = None
+        self.shutdown_event = threading.Event()
         self.last_cmd_time = self.get_clock().now()
         self.remote_control_active = None
 
@@ -89,9 +136,16 @@ class ChassisDriver(Node):
         self.ensure_connected()
 
     def ensure_connected(self):
+        if self.shutdown_event.is_set():
+            return
         with self.serial_lock:
-            connected = self.serial_conn is not None and self.serial_conn.is_open
+            conn = self.serial_conn
+            connected = conn is not None and conn.is_open
         if connected:
+            if self.port.startswith('/') and not os.path.exists(self.port):
+                self.get_logger().warning(f"Serial device disconnected: {self.port}")
+                self.close_serial(conn)
+                return
             self.start_reader()
             return
 
@@ -103,21 +157,26 @@ class ChassisDriver(Node):
             conn = serial.Serial(self.port, self.baudrate, timeout=0.1, write_timeout=0.1)
             conn.reset_input_buffer()
             conn.reset_output_buffer()
-        except (serial.SerialException, OSError, ValueError) as exc:
+        except SERIAL_ERRORS as exc:
             self.get_logger().warning(f"Could not open serial device {self.port}: {exc}")
             return
 
         with self.serial_lock:
             self.serial_conn = conn
-        self.configure_device()
+        if not self.configure_device():
+            self.close_serial()
+            return
         self.start_reader()
         self.get_logger().info(f"Connected to chassis on {self.port}")
 
     def configure_device(self):
         self.log_firmware_version()
-        self.write_raw(self._device_mode_command())
-        self.write_raw(self._state_request_command())
+        if not self.write_raw(self._device_mode_command()):
+            return False
+        if not self.write_raw(self._state_request_command()):
+            return False
         self.send_connection_status('up')
+        return True
 
     @staticmethod
     def _device_mode_command():
@@ -148,7 +207,7 @@ class ChassisDriver(Node):
                 conn.reset_input_buffer()
                 conn.write(self._version_command().encode('utf-8'))
                 conn.flush()
-            except (serial.SerialException, OSError, ValueError) as exc:
+            except SERIAL_ERRORS as exc:
                 self.get_logger().warning(f"Could not query chassis firmware version: {exc}")
                 return
 
@@ -160,7 +219,7 @@ class ChassisDriver(Node):
                     return
                 try:
                     line = conn.readline().decode('utf-8', errors='ignore').strip()
-                except (serial.SerialException, OSError, ValueError) as exc:
+                except SERIAL_ERRORS as exc:
                     self.get_logger().warning(f"Could not read chassis firmware version: {exc}")
                     return
             if not line:
@@ -183,21 +242,26 @@ class ChassisDriver(Node):
         return None
 
     def start_reader(self):
+        if self.shutdown_event.is_set():
+            return
         if self.reader_thread and self.reader_thread.is_alive():
             return
         self.reader_thread = threading.Thread(target=self.read_loop, daemon=True)
         self.reader_thread.start()
 
-    def close_serial(self):
+    def close_serial(self, expected_conn=None):
         with self.serial_lock:
-            conn = self.serial_conn
-            self.serial_conn = None
+            if expected_conn is not None and self.serial_conn is not expected_conn:
+                conn = expected_conn
+            else:
+                conn = self.serial_conn
+                self.serial_conn = None
         if conn:
             try:
                 if conn.is_open:
                     self.write_connection_down(conn)
                 conn.close()
-            except (serial.SerialException, OSError):
+            except Exception:
                 pass
 
     def send_connection_status(self, state):
@@ -206,6 +270,8 @@ class ChassisDriver(Node):
         return self.write_raw(self._connection_status_command(state))
 
     def refresh_connection_status(self):
+        if self.shutdown_event.is_set():
+            return
         with self.serial_lock:
             connected = self.serial_conn is not None and self.serial_conn.is_open
         if connected:
@@ -217,7 +283,7 @@ class ChassisDriver(Node):
         try:
             conn.write(self._connection_status_command('down').encode('utf-8'))
             conn.flush()
-        except (serial.SerialException, OSError, ValueError):
+        except SERIAL_ERRORS:
             pass
 
     @staticmethod
@@ -231,15 +297,10 @@ class ChassisDriver(Node):
 
     @staticmethod
     def _ignored_response_prefixes():
-        values = (
-            (79, 75, 58),
-            (69, 82, 82, 79, 82, 58),
-            (70, 87, 58),
-            (68, 73, 65, 71, 58),
-        )
-        return tuple(''.join(chr(value) for value in item) for item in values)
+        return ('FW', 'DIAG', 'LINK', 'OK', 'ERROR')
 
     def write_raw(self, command):
+        failed_conn = None
         with self.serial_lock:
             conn = self.serial_conn
             if conn is None or not conn.is_open:
@@ -248,22 +309,28 @@ class ChassisDriver(Node):
                 conn.write(command.encode('utf-8'))
                 conn.flush()
                 return True
-            except (serial.SerialException, OSError, ValueError) as exc:
+            except SERIAL_ERRORS as exc:
                 self.get_logger().warning(f"Serial write failed: {exc}")
-                self.serial_conn = None
-        self.close_serial()
+                if self.serial_conn is conn:
+                    self.serial_conn = None
+                failed_conn = conn
+        if failed_conn:
+            try:
+                failed_conn.close()
+            except Exception:
+                pass
         return False
 
     def cmd_vel_callback(self, msg):
         speed = self.clamp(msg.linear.x, -self.max_speed, self.max_speed)
-        if abs(speed) < 1e-3:
-            steering = 0.0 if abs(msg.angular.z) < 1e-3 else math.copysign(self.max_steering_angle, msg.angular.z)
+        if abs(speed) < 0.01:
+            steering = 0.0 if msg.angular.z == 0.0 else math.copysign(self.max_steering_angle, msg.angular.z)
         else:
             steering = math.atan(self.wheelbase * msg.angular.z / speed)
         self.send_drive_command(speed, steering)
 
     def ackermann_cmd_callback(self, msg):
-        self.send_drive_command(msg.drive.speed, msg.drive.steering_angle)
+        self.send_drive_command(msg.speed, msg.steering_angle)
 
     def send_drive_command(self, speed, steering):
         speed = self.clamp(float(speed), -self.max_speed, self.max_speed)
@@ -274,38 +341,77 @@ class ChassisDriver(Node):
     def read_loop(self):
         current_thread = threading.current_thread()
         try:
-            while rclpy.ok():
+            while not self.shutdown_event.is_set() and rclpy.ok():
                 with self.serial_lock:
                     conn = self.serial_conn
                 if conn is None or not conn.is_open:
                     break
                 try:
                     line = conn.readline().decode('utf-8', errors='ignore').strip()
-                except (serial.SerialException, OSError, ValueError) as exc:
+                except SERIAL_ERRORS as exc:
+                    if self.shutdown_event.is_set():
+                        break
                     self.get_logger().warning(f"Serial read failed: {exc}")
-                    self.close_serial()
+                    self.close_serial(conn)
                     break
                 if line:
                     self.handle_device_line(line)
         finally:
-            if self.reader_thread is current_thread:
-                self.reader_thread = None
+            with self.serial_lock:
+                if self.reader_thread is current_thread:
+                    self.reader_thread = None
+
+    def shutdown_driver(self):
+        self.shutdown_event.set()
+        self.close_serial()
+        with self.serial_lock:
+            reader = self.reader_thread
+        if reader and reader is not threading.current_thread() and reader.is_alive():
+            reader.join(timeout=1.0)
 
     def handle_device_line(self, line):
         parts = line.split()
         if not parts:
             return
+        command = parts[0]
+        if command.startswith(self._ignored_response_prefixes()) or command == 'link':
+            return
         try:
-            if parts[0] == 's' and len(parts) == 18:
+            if command == 's' and len(parts) == 18:
                 self.publish_motion_state(parts)
-            elif parts[0] == 'b' and len(parts) == 2:
+            elif command == 'r':
+                self.publish_rc_data(parts)
+                if len(parts) >= 8:
+                    self.update_control_source(parts)
+            elif command == 'm' and len(parts) == 4:
+                self.publish_magnetometer(parts)
+            elif (
+                command == 'b'
+                and len(parts) == 2
+                and self.publish_battery_enabled
+                and self.battery_pub is not None
+            ):
                 self.publish_battery(float(parts[1]))
-            elif parts[0] == 'r' and len(parts) >= 8:
-                self.update_control_source(parts)
-            elif parts[0] in self._ignored_response_prefixes():
-                return
         except ValueError as exc:
             self.get_logger().warning(f"Could not parse chassis data: {exc}")
+
+    def publish_rc_data(self, parts):
+        if not self.publish_rc_enabled or self.rc_pub is None:
+            return
+        msg = Int32MultiArray()
+        msg.data = [int(value) for value in parts[1:]]
+        self.rc_pub.publish(msg)
+
+    def publish_magnetometer(self, parts):
+        if not self.publish_mag_enabled or self.mag_pub is None:
+            return
+        msg = MagneticField()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = self.mag_frame_id
+        msg.magnetic_field.x = float(parts[1]) * 1e-4
+        msg.magnetic_field.y = float(parts[2]) * 1e-4
+        msg.magnetic_field.z = float(parts[3]) * 1e-4
+        self.mag_pub.publish(msg)
 
     def update_control_source(self, parts):
         control_channel = int(parts[7])
@@ -343,6 +449,7 @@ class ChassisDriver(Node):
         odom.twist.twist.linear.x = vx
         odom.twist.twist.linear.y = vy
         odom.twist.twist.linear.z = vz
+        odom.twist.covariance = self.odom_twist_covariance
         self.odom_pub.publish(odom)
 
         if self.tf_broadcaster:
@@ -369,9 +476,14 @@ class ChassisDriver(Node):
         imu.angular_velocity.x = gx
         imu.angular_velocity.y = gy
         imu.angular_velocity.z = gz
+        imu.orientation_covariance = self.imu_orientation_covariance
+        imu.angular_velocity_covariance = self.imu_angular_velocity_covariance
+        imu.linear_acceleration_covariance = self.imu_linear_acceleration_covariance
         self.imu_pub.publish(imu)
 
     def publish_battery(self, voltage):
+        if not self.publish_battery_enabled or self.battery_pub is None:
+            return
         msg = BatteryState()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.voltage = voltage
@@ -380,10 +492,31 @@ class ChassisDriver(Node):
             msg.percentage = self.clamp(pct, 0.0, 1.0)
         self.battery_pub.publish(msg)
 
+    @staticmethod
+    def diagonal_covariance(diagonal):
+        if len(diagonal) != 3:
+            raise ValueError("IMU covariance parameters must contain exactly 3 diagonal values")
+        return [
+            float(diagonal[0]), 0.0, 0.0,
+            0.0, float(diagonal[1]), 0.0,
+            0.0, 0.0, float(diagonal[2]),
+        ]
+
+    @staticmethod
+    def diagonal_covariance_6d(diagonal):
+        if len(diagonal) != 6:
+            raise ValueError("Odometry twist covariance parameter must contain exactly 6 diagonal values")
+        covariance = [0.0] * 36
+        for index, value in enumerate(diagonal):
+            covariance[index * 6 + index] = float(value)
+        return covariance
+
     def watchdog_check(self):
+        if self.shutdown_event.is_set():
+            return
         elapsed = (self.get_clock().now() - self.last_cmd_time).nanoseconds / 1e9
         if elapsed > self.cmd_timeout:
-            self.write_raw("v 0.000 0.00\n")
+            self.write_raw("v 0.00 0.00\n")
 
     @staticmethod
     def clamp(value, lower, upper):
@@ -410,12 +543,14 @@ def main(args=None):
     node = ChassisDriver()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
-        node.close_serial()
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        node.shutdown_driver()
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':

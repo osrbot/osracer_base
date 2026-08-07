@@ -1,6 +1,6 @@
 # OSRacer Base
 
-OSRacer Base 是 OSRacer 的 ROS 2 基础底盘驱动包。它提供速度控制、阿克曼控制、里程计、IMU 和电池状态话题，适合在实车上接入上层导航、遥控或自动驾驶节点。
+OSRacer Base 是 OSRacer 的 ROS 2 基础底盘驱动包。它提供速度控制、阿克曼控制、里程计、IMU、RC 原始通道、磁力计和电池状态话题，适合在实车上接入上层导航、遥控或自动驾驶节点。
 
 ## 支持环境
 
@@ -13,6 +13,7 @@ OSRacer Base 是 OSRacer 的 ROS 2 基础底盘驱动包。它提供速度控制
   - `ackermann_msgs`
   - `nav_msgs`
   - `sensor_msgs`
+  - `std_msgs`
   - `tf2_ros`
   - `ros2launch`
   - `rviz2`
@@ -93,7 +94,7 @@ ros2 launch osracer_base description.launch.py
 geometry_msgs/msg/Twist
 
 /ackermann_cmd
-ackermann_msgs/msg/AckermannDriveStamped
+ackermann_msgs/msg/AckermannDrive
 ```
 
 发布：
@@ -105,11 +106,17 @@ nav_msgs/msg/Odometry
 /imu/data
 sensor_msgs/msg/Imu
 
+/rc_data
+std_msgs/msg/Int32MultiArray
+
+/magnetometer_data
+sensor_msgs/msg/MagneticField
+
 /battery_state
 sensor_msgs/msg/BatteryState
 ```
 
-两个控制话题可以同时存在，驱动会执行最近收到的控制指令。超过 `cmd_timeout` 没有新指令时，车辆会自动停车。
+两个控制话题可以同时存在，驱动会执行最近收到的控制指令。超过 `cmd_timeout` 没有新指令时，车辆会自动停车。RC、磁力计和电池发布可分别关闭，话题名可配置。
 
 ## 参数
 
@@ -118,17 +125,52 @@ sensor_msgs/msg/BatteryState
 | `port` | `/dev/osrbot_base` | 底盘串口设备 |
 | `baudrate` | `460800` | 串口波特率 |
 | `wheelbase` | `0.325` | B102 轴距，单位 m |
-| `max_speed` | 默认值 | ROS 控制速度上限，单位 m/s |
+| `max_speed` | `0.8` | ROS 控制速度上限，单位 m/s |
 | `speed_mode` | `high` | 速度模式，支持 `high` 和 `low` |
 | `max_steering_angle` | `0.5235987756` | 最大转向角，单位 rad |
 | `cmd_timeout` | `0.5` | 控制超时时间，单位 s |
-| `firmware_version_timeout` | `0.5` | 启动时读取底盘固件版本的等待时间，单位 s |
+| `reconnect_interval` | `2.0` | 串口重连周期，单位 s |
+| `firmware_version_timeout` | `0.3` | 启动时读取底盘固件版本的等待时间，单位 s |
 | `connection_status_enabled` | `true` | 是否维护底盘 ROS 连接状态提示 |
 | `connection_refresh_period` | `1.0` | 连接状态刷新周期，单位 s |
 | `odom_frame_id` | `odom` | 里程计坐标系 |
 | `base_frame_id` | `base_footprint` | 车体坐标系 |
 | `imu_frame_id` | `imu_link` | IMU 坐标系 |
 | `publish_tf` | `true` | 是否发布 `odom` 到车体坐标系的 TF |
+| `publish_rc` | `true` | 是否发布 RC 原始通道值 |
+| `rc_topic` | `rc_data` | RC 原始通道话题 |
+| `publish_mag` | `true` | 是否发布磁力计数据 |
+| `mag_topic` | `magnetometer_data` | 磁力计话题 |
+| `mag_frame_id` | `imu_link` | 磁力计坐标系 |
+| `imu_orientation_covariance` | `[0.02, 0.02, 0.05]` | IMU 姿态 covariance 对角线 |
+| `imu_angular_velocity_covariance` | `[0.01, 0.01, 0.01]` | IMU 角速度 covariance 对角线 |
+| `imu_linear_acceleration_covariance` | `[0.10, 0.10, 0.10]` | IMU 线加速度 covariance 对角线 |
+| `odom_twist_covariance` | `[0.02, 0.20, 1.0, 1.0, 1.0, 0.30]` | 里程计 twist covariance 对角线 |
+| `publish_battery` | `true` | 是否发布电池状态 |
+| `battery_topic` | `battery_state` | 电池状态话题 |
+| `battery_voltage_min` | `10.8` | 映射为 0% 的电压 |
+| `battery_voltage_max` | `12.6` | 映射为 100% 的电压 |
+
+### 从已验收 c329 驱动迁移
+
+`osracer_base` 只提供一套 canonical 参数接口。从 `osracer@c329c21` 迁移的上层 launch 必须显式完成以下映射：
+
+| c329 参数 | osracer_base 参数 | 换算 |
+| --- | --- | --- |
+| `port_name` | `port` | 无 |
+| `baud_rate` | `baudrate` | 无 |
+| `odom_frame` | `odom_frame_id` | 无 |
+| `base_frame` | `base_frame_id` | 无 |
+| `imu_frame` | `imu_frame_id` | 无 |
+| `max_steering_angle_deg` | `max_steering_angle` | 度换算为弧度 |
+| `cmd_watchdog_timeout_s` | `cmd_timeout` | 无 |
+| `reconnect_interval_s` | `reconnect_interval` | 无 |
+| `firmware_version_timeout_s` | `firmware_version_timeout` | 无 |
+| `link_status_enabled` | `connection_status_enabled` | 无 |
+| `link_ping_period_s` | `connection_refresh_period` | 无 |
+| `mag_frame` | `mag_frame_id` | 无 |
+
+base 自有默认值继续保持 `/dev/osrbot_base`、`wheelbase=0.325`、`max_speed=0.8`、`speed_mode=high` 和 30 度转向上限。
 
 ## 控制示例
 
@@ -142,8 +184,8 @@ ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist \
 阿克曼控制：
 
 ```bash
-ros2 topic pub --once /ackermann_cmd ackermann_msgs/msg/AckermannDriveStamped \
-"{drive: {speed: 0.3, steering_angle: 0.1}}"
+ros2 topic pub --once /ackermann_cmd ackermann_msgs/msg/AckermannDrive \
+"{speed: 0.3, steering_angle: 0.1}"
 ```
 
 查看电池状态：

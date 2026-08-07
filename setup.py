@@ -16,6 +16,7 @@ setup(
         (f'share/{package_name}/udev', glob('udev/*.rules')),
     ],
     install_requires=['setuptools'],
+    tests_require=['pytest'],
     zip_safe=True,
     maintainer='osrbot',
     maintainer_email='osrbot@osrbot.com',
