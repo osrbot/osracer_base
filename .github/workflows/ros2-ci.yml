@@ -46,6 +46,7 @@ jobs:
         working-directory: ros2_ws
         run: |
           set -euo pipefail
+          rosdep update --rosdistro "$ROS_DISTRO"
           rosdep install --from-paths src --ignore-src --rosdistro "$ROS_DISTRO" -y
 
       - name: Run static contract checks
