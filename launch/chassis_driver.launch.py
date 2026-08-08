@@ -1,18 +1,28 @@
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
+from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
+    default_profile_file = PathJoinSubstitution([
+        FindPackageShare('osracer_base'),
+        'config',
+        'vehicles',
+        PythonExpression(["'", LaunchConfiguration('vehicle_profile'), ".yaml'"]),
+    ])
+
     args = [
+        DeclareLaunchArgument(
+            'vehicle_profile',
+            description='Required chassis profile: neo, red, or blue',
+            choices=['neo', 'red', 'blue'],
+        ),
+        DeclareLaunchArgument('profile_file', default_value=default_profile_file),
         DeclareLaunchArgument('port', default_value='/dev/osrbot_base'),
         DeclareLaunchArgument('baudrate', default_value='460800'),
-        DeclareLaunchArgument('wheelbase', default_value='0.325'),
-        DeclareLaunchArgument('max_speed', default_value='0.8'),
-        DeclareLaunchArgument('speed_mode', default_value='high'),
-        DeclareLaunchArgument('max_steering_angle', default_value='0.5235987756'),
         DeclareLaunchArgument('cmd_timeout', default_value='0.5'),
         DeclareLaunchArgument('reconnect_interval', default_value='2.0'),
         DeclareLaunchArgument('firmware_version_timeout', default_value='0.3'),
@@ -42,13 +52,9 @@ def generate_launch_description():
         executable='chassis_driver',
         name='osracer_base',
         output='screen',
-        parameters=[{
+        parameters=[LaunchConfiguration('profile_file'), {
             'port': LaunchConfiguration('port'),
             'baudrate': LaunchConfiguration('baudrate'),
-            'wheelbase': LaunchConfiguration('wheelbase'),
-            'max_speed': LaunchConfiguration('max_speed'),
-            'speed_mode': LaunchConfiguration('speed_mode'),
-            'max_steering_angle': LaunchConfiguration('max_steering_angle'),
             'cmd_timeout': LaunchConfiguration('cmd_timeout'),
             'reconnect_interval': LaunchConfiguration('reconnect_interval'),
             'firmware_version_timeout': LaunchConfiguration('firmware_version_timeout'),

@@ -2,6 +2,11 @@
 
 OSRacer Base is the minimal ROS 2 chassis driver package for OSRacer. It exposes velocity control, Ackermann control, odometry, IMU, raw RC, magnetometer, and battery status topics for real vehicle bringup.
 
+The active ROS 2 development line is `main`. The `ros1` branch is compatibility-only
+and changes only when a ROS 1 requirement is confirmed. Existing Neo customer
+deliveries remain on the complete `osracer/product/neo` stack. This package does
+not replace that frozen delivery line.
+
 ## Requirements
 
 - Ubuntu 22.04 + ROS 2 Humble, or Ubuntu 24.04 + ROS 2 Jazzy
@@ -60,21 +65,30 @@ source install/setup.bash
 ## Launch
 
 ```bash
-ros2 launch osracer_base chassis_driver.launch.py
+ros2 launch osracer_base chassis_driver.launch.py vehicle_profile:=red
 ```
 
-After startup, the driver logs the chassis firmware `ProjectVer` and maintains the chassis ROS connection status indicator. If the RC transmitter is in priority control mode, the driver warns that ROS motion commands may be ignored until serial control is selected.
+`vehicle_profile` is required and must be `neo`, `red`, or `blue`. Before enabling
+the stream, the driver verifies the firmware `ProjectVer`, `Proto=1.1`, ProfileID,
+profile schema, and motion-ready state. A mismatch closes the connection before
+any motion command is sent.
+
+After startup, the driver logs the verified firmware and profile identity and maintains
+the chassis ROS connection status indicator. If the RC transmitter is in priority
+control mode, the driver warns that ROS motion commands may be ignored until serial
+control is selected.
 
 The default device path is `/dev/osrbot_base`. Use a different `port` value only when needed:
 
 ```bash
-ros2 launch osracer_base chassis_driver.launch.py port:=/dev/ttyACM0
+ros2 launch osracer_base chassis_driver.launch.py \
+  vehicle_profile:=red port:=/dev/ttyACM0
 ```
 
 View odometry and TF in RViz:
 
 ```bash
-ros2 launch osracer_base odom_view.launch.py
+ros2 launch osracer_base odom_view.launch.py vehicle_profile:=red
 ```
 
 Publish a static TF example for SLAM bringup:
@@ -124,10 +138,12 @@ Both control topics can be used. The driver applies the most recent command. If 
 | --- | --- | --- |
 | `port` | `/dev/osrbot_base` | Chassis serial device |
 | `baudrate` | `460800` | Serial baud rate |
-| `wheelbase` | `0.325` | B102 wheelbase in meters |
-| `max_speed` | `0.8` | ROS control speed limit in m/s |
-| `speed_mode` | `high` | Speed mode, supports `high` and `low` |
-| `max_steering_angle` | `0.5235987756` | Maximum steering angle in radians |
+| `vehicle_profile` | required | Selected firmware and chassis profile |
+| `profile_schema` | profile file | Expected firmware profile schema |
+| `wheelbase` | profile file | Vehicle wheelbase in meters |
+| `max_speed` | profile file | Conservative ROS control speed limit in m/s |
+| `speed_mode` | profile file | Speed mode, supports `high` and `low` |
+| `max_steering_angle` | profile file | Maximum steering angle in radians |
 | `cmd_timeout` | `0.5` | Command timeout in seconds |
 | `reconnect_interval` | `2.0` | Serial reconnect interval in seconds |
 | `firmware_version_timeout` | `0.3` | Startup wait time for reading chassis firmware version, in seconds |
@@ -148,8 +164,26 @@ Both control topics can be used. The driver applies the most recent command. If 
 | `odom_twist_covariance` | `[0.02, 0.20, 1.0, 1.0, 1.0, 0.30]` | Odometry twist covariance diagonal |
 | `publish_battery` | `true` | Publish battery state |
 | `battery_topic` | `battery_state` | Battery topic |
-| `battery_voltage_min` | `10.8` | Voltage mapped to 0% |
-| `battery_voltage_max` | `12.6` | Voltage mapped to 100% |
+| `battery_voltage_min` | `10.8` | Display-only voltage mapped to 0% |
+| `battery_voltage_max` | `12.6` | Display-only voltage mapped to 100% |
+
+### Vehicle profiles
+
+The installed files under `config/vehicles` contain only ROS-side chassis values:
+
+| Profile | Wheelbase | ROS speed limit | Steering limit |
+| --- | ---: | ---: | ---: |
+| `neo` | 0.285 m | 4.64 m/s | 30 deg |
+| `red` | 0.285 m | 4.64 m/s | 30 deg |
+| `blue` | 0.325 m | 0.8 m/s | 30 deg |
+
+Neo and Red keep separate identities even though their current ROS-side numeric
+values match. Firmware-only values such as GPIO, encoder PPR, gear ratio, wheel
+radius, PID, PWM, NVS, and hard safety limits are not duplicated here.
+
+The battery voltage is measured and sent by the firmware. The two voltage parameters
+above only estimate `BatteryState.percentage`; they do not affect firmware calibration,
+low-voltage protection, alarms, or motion safety.
 
 ### Migration from the accepted c329 driver
 
@@ -170,7 +204,9 @@ Both control topics can be used. The driver applies the most recent command. If 
 | `link_ping_period_s` | `connection_refresh_period` | None |
 | `mag_frame` | `mag_frame_id` | None |
 
-The base-specific defaults remain `/dev/osrbot_base`, `wheelbase=0.325`, `max_speed=0.8`, `speed_mode=high`, and a 30-degree steering limit.
+Vehicle geometry and ROS limits now come from the selected profile file. Common defaults
+such as `/dev/osrbot_base`, frame names, watchdog timing, and battery display mapping
+remain configurable ROS parameters.
 
 ## Examples
 
@@ -202,7 +238,10 @@ ros2 run osracer_base check_device
 
 ## Status Indicators and Troubleshooting
 
-- On startup, the ROS log should show `Connected to chassis` and `Chassis firmware ProjectVer`.
+- On startup, the ROS log should show `Connected to chassis` and the verified firmware,
+  protocol, and profile identity.
+- A protocol, ProfileID, or schema mismatch is intentionally fail-closed. Select the
+  matching `vehicle_profile` instead of overriding firmware identity.
 - Low-voltage alerts are handled by the chassis itself. If battery voltage stays too low, the vehicle uses sound and light indicators and stops motion output.
 - If the ROS node exits or USB connection is lost, the chassis enters its connection-lost indicator state. Restarting the node or reconnecting USB should recover it.
 - If chassis status indicators do not appear, run `ros2 run osracer_base check_device` first, then confirm the startup log prints the firmware version.

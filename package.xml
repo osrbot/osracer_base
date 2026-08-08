@@ -2,11 +2,13 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>osracer_base</name>
-  <version>0.1.0</version>
+  <version>0.2.0</version>
   <description>Minimal ROS 2 chassis driver for OSRacer.</description>
 
   <maintainer email="osrbot@osrbot.com">osrbot</maintainer>
   <license>MIT</license>
+
+  <buildtool_depend>ament_python</buildtool_depend>
 
   <depend>rclpy</depend>
   <depend>ament_index_python</depend>
@@ -22,6 +24,7 @@
   <exec_depend>rviz2</exec_depend>
 
   <test_depend>python3-pytest</test_depend>
+  <test_depend>python3-yaml</test_depend>
 
   <export>
     <build_type>ament_python</build_type>

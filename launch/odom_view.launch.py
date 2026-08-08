@@ -10,12 +10,13 @@ def generate_launch_description():
     package_share = FindPackageShare('osracer_base')
 
     args = [
+        DeclareLaunchArgument(
+            'vehicle_profile',
+            description='Required chassis profile: neo, red, or blue',
+            choices=['neo', 'red', 'blue'],
+        ),
         DeclareLaunchArgument('port', default_value='/dev/osrbot_base'),
         DeclareLaunchArgument('baudrate', default_value='460800'),
-        DeclareLaunchArgument('wheelbase', default_value='0.325'),
-        DeclareLaunchArgument('max_speed', default_value='0.8'),
-        DeclareLaunchArgument('speed_mode', default_value='high'),
-        DeclareLaunchArgument('max_steering_angle', default_value='0.5235987756'),
         DeclareLaunchArgument('cmd_timeout', default_value='0.5'),
         DeclareLaunchArgument('odom_frame_id', default_value='odom'),
         DeclareLaunchArgument('base_frame_id', default_value='base_footprint'),
@@ -45,12 +46,9 @@ def generate_launch_description():
             PathJoinSubstitution([package_share, 'launch', 'chassis_driver.launch.py'])
         ),
         launch_arguments={
+            'vehicle_profile': LaunchConfiguration('vehicle_profile'),
             'port': LaunchConfiguration('port'),
             'baudrate': LaunchConfiguration('baudrate'),
-            'wheelbase': LaunchConfiguration('wheelbase'),
-            'max_speed': LaunchConfiguration('max_speed'),
-            'speed_mode': LaunchConfiguration('speed_mode'),
-            'max_steering_angle': LaunchConfiguration('max_steering_angle'),
             'cmd_timeout': LaunchConfiguration('cmd_timeout'),
             'odom_frame_id': LaunchConfiguration('odom_frame_id'),
             'base_frame_id': LaunchConfiguration('base_frame_id'),

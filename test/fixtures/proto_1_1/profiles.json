@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "protocol": "1.1",
+  "profiles": {
+    "neo": {
+      "profile_schema": 1,
+      "wheelbase_m": 0.285,
+      "ros_max_speed_mps": 4.64,
+      "max_steering_angle_rad": 0.5235987756
+    },
+    "red": {
+      "profile_schema": 1,
+      "wheelbase_m": 0.285,
+      "ros_max_speed_mps": 4.64,
+      "max_steering_angle_rad": 0.5235987756
+    },
+    "blue": {
+      "profile_schema": 1,
+      "wheelbase_m": 0.325,
+      "ros_max_speed_mps": 0.8,
+      "max_steering_angle_rad": 0.5235987756
+    }
+  }
+}

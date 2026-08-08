@@ -22,6 +22,7 @@ import serial
 
 DEFAULT_MAX_SPEED = 0.8
 LOW_SPEED_RATIO = 0.5
+SUPPORTED_PROTOCOL = '1.1'
 SERIAL_ERRORS = (serial.SerialException, OSError, ValueError, TypeError, termios.error)
 
 
@@ -31,6 +32,8 @@ class ChassisDriver(Node):
 
         self.declare_parameter('port', '/dev/osrbot_base')
         self.declare_parameter('baudrate', 460800)
+        self.declare_parameter('vehicle_profile', '')
+        self.declare_parameter('profile_schema', 1)
         self.declare_parameter('wheelbase', 0.325)
         self.declare_parameter('max_speed', DEFAULT_MAX_SPEED)
         self.declare_parameter('speed_mode', 'high')
@@ -60,6 +63,12 @@ class ChassisDriver(Node):
 
         self.port = self.get_parameter('port').value
         self.baudrate = int(self.get_parameter('baudrate').value)
+        self.vehicle_profile = str(self.get_parameter('vehicle_profile').value).strip().lower()
+        self.profile_schema = int(self.get_parameter('profile_schema').value)
+        if not re.fullmatch(r'[a-z0-9_-]+', self.vehicle_profile):
+            raise ValueError('vehicle_profile must be selected explicitly')
+        if self.profile_schema < 1:
+            raise ValueError('profile_schema must be positive')
         self.wheelbase = float(self.get_parameter('wheelbase').value)
         self.max_speed = self.resolve_max_speed(
             self.get_parameter('max_speed').value,
@@ -170,7 +179,8 @@ class ChassisDriver(Node):
         self.get_logger().info(f"Connected to chassis on {self.port}")
 
     def configure_device(self):
-        self.log_firmware_version()
+        if not self.verify_firmware_identity():
+            return False
         if not self.write_raw(self._device_mode_command()):
             return False
         if not self.write_raw(self._state_request_command()):
@@ -194,11 +204,15 @@ class ChassisDriver(Node):
     def _version_command():
         return ''.join(chr(value) for value in (102, 119, 32, 118, 101, 114, 115, 105, 111, 110, 10))
 
-    def log_firmware_version(self):
+    @staticmethod
+    def _profile_command():
+        return 'profile get\n'
+
+    def verify_firmware_identity(self):
         with self.serial_lock:
             conn = self.serial_conn
             if conn is None or not conn.is_open:
-                return
+                return False
             try:
                 conn.reset_input_buffer()
                 conn.write(self._quiet_command().encode('utf-8'))
@@ -209,30 +223,76 @@ class ChassisDriver(Node):
                 conn.flush()
             except SERIAL_ERRORS as exc:
                 self.get_logger().warning(f"Could not query chassis firmware version: {exc}")
-                return
+                return False
 
+        version = self.read_identity_response(self.parse_firmware_version)
+        if version is None:
+            self.get_logger().warning('Chassis firmware identity unavailable')
+            return False
+        project_ver, protocol = version
+        if protocol != SUPPORTED_PROTOCOL:
+            self.get_logger().warning(
+                f"Unsupported chassis protocol {protocol}; expected {SUPPORTED_PROTOCOL}"
+            )
+            return False
+
+        if not self.write_raw(self._profile_command()):
+            return False
+        profile = self.read_identity_response(self.parse_profile_status)
+        if profile is None:
+            self.get_logger().warning('Chassis profile identity unavailable')
+            return False
+        if profile['id'] != self.vehicle_profile or profile['schema'] != self.profile_schema:
+            self.get_logger().warning(
+                'Chassis profile mismatch: '
+                f"device={profile['id']}/schema-{profile['schema']} "
+                f"selected={self.vehicle_profile}/schema-{self.profile_schema}"
+            )
+            return False
+        if profile['state'] != 'READY' or not profile['motion']:
+            self.get_logger().warning(
+                'Chassis profile is not motion-ready: '
+                f"State={profile['state']}, Motion={'Yes' if profile['motion'] else 'No'}"
+            )
+            return False
+
+        self.get_logger().info(
+            f"Chassis firmware ProjectVer: {project_ver}, Proto: {protocol}, "
+            f"Profile: {profile['id']}/schema-{profile['schema']}, State: {profile['state']}"
+        )
+        return True
+
+    def read_identity_response(self, parser):
         deadline = time.monotonic() + max(0.1, self.firmware_version_timeout)
         while time.monotonic() < deadline:
             with self.serial_lock:
                 conn = self.serial_conn
                 if conn is None or not conn.is_open:
-                    return
+                    return None
                 try:
                     line = conn.readline().decode('utf-8', errors='ignore').strip()
                 except SERIAL_ERRORS as exc:
-                    self.get_logger().warning(f"Could not read chassis firmware version: {exc}")
-                    return
-            if not line:
-                continue
-            project_ver = self.parse_project_version(line)
-            if project_ver:
-                self.get_logger().info(f"Chassis firmware ProjectVer: {project_ver}")
-                return
+                    self.get_logger().warning(f"Could not read chassis identity: {exc}")
+                    return None
+            if line:
+                result = parser(line)
+                if result is not None:
+                    return result
+        return None
 
-        self.get_logger().warning("Chassis firmware version unavailable")
+    @staticmethod
+    def parse_firmware_version(line):
+        project_match = re.search(r'\bProjectVer\s*[:=]\s*([^,\s]+)', line)
+        protocol_match = re.search(r'\bProto\s*[:=]\s*([0-9]+(?:\.[0-9]+)*)', line)
+        if project_match and protocol_match:
+            return project_match.group(1), protocol_match.group(1)
+        return None
 
     @staticmethod
     def parse_project_version(line):
+        identity = ChassisDriver.parse_firmware_version(line)
+        if identity:
+            return identity[0]
         match = re.search(r'\bProjectVer\s*[:=]\s*([^,\s]+)', line)
         if match:
             return match.group(1)
@@ -240,6 +300,23 @@ class ChassisDriver(Node):
         if match:
             return match.group(1)
         return None
+
+    @staticmethod
+    def parse_profile_status(line):
+        match = re.fullmatch(
+            r'PROFILE:\s+ID=([a-z0-9_-]+),\s+Schema=([0-9]+),\s+'
+            r'State=([A-Z0-9_]+),\s+Motion=(Yes|No),\s+Writes=(Yes|No)',
+            line,
+        )
+        if not match:
+            return None
+        return {
+            'id': match.group(1),
+            'schema': int(match.group(2)),
+            'state': match.group(3),
+            'motion': match.group(4) == 'Yes',
+            'writes': match.group(5) == 'Yes',
+        }
 
     def start_reader(self):
         if self.shutdown_event.is_set():

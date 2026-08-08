@@ -14,9 +14,11 @@
   },
   "startup": {
     "firmware_version_response": "FW_VERSION: ProjectVer=PUBLIC_TEST_FIXTURE, Proto=1.1",
+    "firmware_profile_response": "PROFILE: ID=red, Schema=1, State=READY, Motion=Yes, Writes=Yes",
     "expected_host_commands": [
       "stream off\n",
       "fw version\n",
+      "profile get\n",
       "stream sync\n",
       "s\n",
       "link up ros\n"

@@ -2,6 +2,10 @@
 
 OSRacer Base 是 OSRacer 的 ROS 2 基础底盘驱动包。它提供速度控制、阿克曼控制、里程计、IMU、RC 原始通道、磁力计和电池状态话题，适合在实车上接入上层导航、遥控或自动驾驶节点。
 
+ROS 2 的当前开发主线为 `main`。`ros1` 仅作为兼容分支，只有确认存在 ROS 1
+需求时才继续维护。现有 Neo 客户交付继续使用完整的
+`osracer/product/neo`，本包不替换该冻结交付线。
+
 ## 支持环境
 
 - Ubuntu 22.04 + ROS 2 Humble，或 Ubuntu 24.04 + ROS 2 Jazzy
@@ -60,21 +64,28 @@ source install/setup.bash
 ## 启动
 
 ```bash
-ros2 launch osracer_base chassis_driver.launch.py
+ros2 launch osracer_base chassis_driver.launch.py vehicle_profile:=red
 ```
 
-启动成功后，驱动会在日志中打印底盘固件 `ProjectVer`，并维护底盘的 ROS 连接状态提示。如果遥控器处于优先控制状态，驱动会提示 ROS 运动指令可能暂时不会生效。
+必须显式指定 `vehicle_profile`，可选值为 `neo`、`red` 或 `blue`。驱动在启用
+stream 前核对固件 `ProjectVer`、`Proto=1.1`、ProfileID、profile schema 和可运动
+状态；任何不匹配都会在发送运动命令前关闭连接。
+
+启动成功后，驱动会在日志中打印已核对的固件和 profile 身份，并维护底盘的
+ROS 连接状态提示。如果遥控器处于优先控制状态，驱动会提示 ROS 运动指令可能
+暂时不会生效。
 
 默认设备路径是 `/dev/osrbot_base`。如果现场设备路径不同，可以手动覆盖：
 
 ```bash
-ros2 launch osracer_base chassis_driver.launch.py port:=/dev/ttyACM0
+ros2 launch osracer_base chassis_driver.launch.py \
+  vehicle_profile:=red port:=/dev/ttyACM0
 ```
 
 查看里程计和 TF：
 
 ```bash
-ros2 launch osracer_base odom_view.launch.py
+ros2 launch osracer_base odom_view.launch.py vehicle_profile:=red
 ```
 
 发布 SLAM 常用静态 TF 示例：
@@ -124,10 +135,12 @@ sensor_msgs/msg/BatteryState
 | --- | --- | --- |
 | `port` | `/dev/osrbot_base` | 底盘串口设备 |
 | `baudrate` | `460800` | 串口波特率 |
-| `wheelbase` | `0.325` | B102 轴距，单位 m |
-| `max_speed` | `0.8` | ROS 控制速度上限，单位 m/s |
-| `speed_mode` | `high` | 速度模式，支持 `high` 和 `low` |
-| `max_steering_angle` | `0.5235987756` | 最大转向角，单位 rad |
+| `vehicle_profile` | 必填 | 选择固件和底盘 profile |
+| `profile_schema` | 车型文件 | 预期固件 profile schema |
+| `wheelbase` | 车型文件 | 车辆轴距，单位 m |
+| `max_speed` | 车型文件 | ROS 侧保守速度上限，单位 m/s |
+| `speed_mode` | 车型文件 | 速度模式，支持 `high` 和 `low` |
+| `max_steering_angle` | 车型文件 | 最大转向角，单位 rad |
 | `cmd_timeout` | `0.5` | 控制超时时间，单位 s |
 | `reconnect_interval` | `2.0` | 串口重连周期，单位 s |
 | `firmware_version_timeout` | `0.3` | 启动时读取底盘固件版本的等待时间，单位 s |
@@ -148,8 +161,24 @@ sensor_msgs/msg/BatteryState
 | `odom_twist_covariance` | `[0.02, 0.20, 1.0, 1.0, 1.0, 0.30]` | 里程计 twist covariance 对角线 |
 | `publish_battery` | `true` | 是否发布电池状态 |
 | `battery_topic` | `battery_state` | 电池状态话题 |
-| `battery_voltage_min` | `10.8` | 映射为 0% 的电压 |
-| `battery_voltage_max` | `12.6` | 映射为 100% 的电压 |
+| `battery_voltage_min` | `10.8` | 仅用于显示映射为 0% 的电压 |
+| `battery_voltage_max` | `12.6` | 仅用于显示映射为 100% 的电压 |
+
+### 车型 profile
+
+安装到 `config/vehicles` 的文件只包含 ROS 侧底盘参数：
+
+| Profile | 轴距 | ROS 速度上限 | 转角上限 |
+| --- | ---: | ---: | ---: |
+| `neo` | 0.285 m | 4.64 m/s | 30 deg |
+| `red` | 0.285 m | 4.64 m/s | 30 deg |
+| `blue` | 0.325 m | 0.8 m/s | 30 deg |
+
+Neo 和 Red 当前的 ROS 数值相同，但仍保留独立身份。GPIO、编码器 PPR、齿比、
+轮径、PID、PWM、NVS 和固件硬安全上限等下位机参数不会复制到这里。
+
+电池电压由固件测量并上传。上述两个电压参数只用于估算
+`BatteryState.percentage`，不会影响固件校准、低压保护、告警或运动安全。
 
 ### 从已验收 c329 驱动迁移
 
@@ -170,7 +199,8 @@ sensor_msgs/msg/BatteryState
 | `link_ping_period_s` | `connection_refresh_period` | 无 |
 | `mag_frame` | `mag_frame_id` | 无 |
 
-base 自有默认值继续保持 `/dev/osrbot_base`、`wheelbase=0.325`、`max_speed=0.8`、`speed_mode=high` 和 30 度转向上限。
+车辆几何和 ROS 运行限值现在来自选定的车型文件。`/dev/osrbot_base`、frame
+名称、watchdog 和电池显示映射等公共参数仍可通过 ROS 参数配置。
 
 ## 控制示例
 
@@ -202,7 +232,10 @@ ros2 run osracer_base check_device
 
 ## 状态提示与排查
 
-- 启动时应能在 ROS 日志中看到 `Connected to chassis` 和 `Chassis firmware ProjectVer`。
+- 启动时应能在 ROS 日志中看到 `Connected to chassis`，以及通过核对的固件、
+  协议和 profile 身份。
+- 协议、ProfileID 或 schema 不匹配会按设计拒绝连接；应选择正确的
+  `vehicle_profile`，不能覆盖固件身份继续运行。
 - 车辆上电后低压告警由底盘独立处理；如果电池电压持续过低，车辆会有声音和灯光提示，并停止执行运动输出。
 - 如果 ROS 节点退出或 USB 连接异常，底盘会进入连接丢失提示状态；重新启动节点或重新插拔 USB 后应恢复。
 - 如果没有底盘状态提示，先检查 `ros2 run osracer_base check_device`，再确认启动日志里是否打印了固件版本。

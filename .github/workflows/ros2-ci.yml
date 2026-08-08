@@ -2,9 +2,9 @@ name: ROS 2 CI
 
 on:
   push:
-    branches: [ros2]
+    branches: [main, ros2]
   pull_request:
-    branches: [ros2]
+    branches: [main, ros2]
   workflow_dispatch:
 
 permissions:
@@ -60,12 +60,19 @@ jobs:
           import xml.etree.ElementTree as ET
           from pathlib import Path
 
+          import yaml
+
           ET.parse('package.xml')
           fixture_paths = sorted(Path('test/fixtures').rglob('*.json'))
           if not fixture_paths:
               raise SystemExit('No JSON fixtures found')
           for fixture_path in fixture_paths:
               json.loads(fixture_path.read_text(encoding='utf-8'))
+          profile_paths = sorted(Path('config/vehicles').glob('*.yaml'))
+          if [path.stem for path in profile_paths] != ['blue', 'neo', 'red']:
+              raise SystemExit('Expected exactly the blue, neo, and red vehicle profiles')
+          for profile_path in profile_paths:
+              yaml.safe_load(profile_path.read_text(encoding='utf-8'))
           PY
 
       - name: Run Ruff

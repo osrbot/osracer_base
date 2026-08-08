@@ -1,0 +1,8 @@
+/**:
+  ros__parameters:
+    vehicle_profile: blue
+    profile_schema: 1
+    wheelbase: 0.325
+    max_speed: 0.8
+    speed_mode: high
+    max_steering_angle: 0.5235987756

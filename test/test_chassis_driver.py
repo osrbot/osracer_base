@@ -11,10 +11,14 @@ from collections import deque
 from pathlib import Path
 from unittest import mock
 
+import yaml
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DRIVER_PATH = REPO_ROOT / 'osracer_base' / 'chassis_driver.py'
 FIXTURE_PATH = REPO_ROOT / 'test' / 'fixtures' / 'proto_1_1' / 'session.json'
+PROFILE_FIXTURE_PATH = REPO_ROOT / 'test' / 'fixtures' / 'proto_1_1' / 'profiles.json'
+PROFILE_CONFIG_DIR = REPO_ROOT / 'config' / 'vehicles'
 WORKFLOW_PATH = REPO_ROOT / '.github' / 'workflows' / 'ros2-ci.yml'
 
 
@@ -140,9 +144,10 @@ class _Clock:
 
 
 class _FakeSerial:
-    def __init__(self, version_line=None, fail_on_write=None):
+    def __init__(self, version_line=None, profile_line=None, fail_on_write=None):
         self.is_open = True
         self.version_line = version_line
+        self.profile_line = profile_line
         self.fail_on_write = fail_on_write
         self.lines = deque()
         self.writes = []
@@ -161,6 +166,8 @@ class _FakeSerial:
         self.writes.append(text)
         if text == 'fw version\n' and self.version_line:
             self.lines.append((self.version_line + '\n').encode('utf-8'))
+        if text == 'profile get\n' and self.profile_line:
+            self.lines.append((self.profile_line + '\n').encode('utf-8'))
         return len(payload)
 
     def flush(self):
@@ -257,6 +264,8 @@ def _driver_shell():
     driver.port = 'loop://sanitized'
     driver.baudrate = 460800
     driver.firmware_version_timeout = 0.01
+    driver.vehicle_profile = 'red'
+    driver.profile_schema = 1
     driver.connection_status_enabled = True
     driver.remote_control_active = None
     driver.publish_rc_enabled = True
@@ -299,6 +308,7 @@ class FixtureContractTests(unittest.TestCase):
             [
                 'stream off\n',
                 'fw version\n',
+                'profile get\n',
                 'stream sync\n',
                 's\n',
                 'link up ros\n',
@@ -308,6 +318,47 @@ class FixtureContractTests(unittest.TestCase):
         self.assertEqual(data['control']['watchdog_command'], 'v 0.00 0.00\n')
         self.assertEqual(data['control']['cmd_vel_near_zero_mps'], 0.01)
         self.assertEqual(data['startup']['firmware_version_timeout_seconds'], 0.3)
+
+    def test_vehicle_profiles_match_public_firmware_contract(self):
+        contract = json.loads(PROFILE_FIXTURE_PATH.read_text(encoding='utf-8'))
+        self.assertEqual(contract['protocol'], DRIVER.SUPPORTED_PROTOCOL)
+        self.assertEqual(set(contract['profiles']), {'neo', 'red', 'blue'})
+
+        for name, expected in contract['profiles'].items():
+            self.assertEqual(
+                set(expected),
+                {'profile_schema', 'wheelbase_m', 'ros_max_speed_mps', 'max_steering_angle_rad'},
+            )
+            config = yaml.safe_load((PROFILE_CONFIG_DIR / f'{name}.yaml').read_text(encoding='utf-8'))
+            params = config['/**']['ros__parameters']
+            self.assertEqual(
+                set(params),
+                {
+                    'vehicle_profile',
+                    'profile_schema',
+                    'wheelbase',
+                    'max_speed',
+                    'speed_mode',
+                    'max_steering_angle',
+                },
+            )
+            self.assertEqual(params['vehicle_profile'], name)
+            self.assertEqual(params['profile_schema'], expected['profile_schema'])
+            self.assertEqual(params['wheelbase'], expected['wheelbase_m'])
+            self.assertEqual(params['max_speed'], expected['ros_max_speed_mps'])
+            self.assertEqual(params['max_steering_angle'], expected['max_steering_angle_rad'])
+            for firmware_only in ('gpio', 'encoder', 'ppr', 'gear', 'wheel_radius', 'pid', 'pwm', 'nvs'):
+                self.assertNotIn(firmware_only, ' '.join(params).lower())
+
+        neo = yaml.safe_load((PROFILE_CONFIG_DIR / 'neo.yaml').read_text(encoding='utf-8'))
+        red = yaml.safe_load((PROFILE_CONFIG_DIR / 'red.yaml').read_text(encoding='utf-8'))
+        neo_params = neo['/**']['ros__parameters']
+        red_params = red['/**']['ros__parameters']
+        self.assertNotEqual(neo_params['vehicle_profile'], red_params['vehicle_profile'])
+        self.assertEqual(
+            {key: value for key, value in neo_params.items() if key != 'vehicle_profile'},
+            {key: value for key, value in red_params.items() if key != 'vehicle_profile'},
+        )
 
     def test_fixture_records_c329_sensor_contract(self):
         data = _fixture()
@@ -339,6 +390,9 @@ class PublicApiTests(unittest.TestCase):
             self.assertIn(f"declare_parameter('{name}'", source)
             self.assertIn(f"DeclareLaunchArgument('{name}'", launch)
             self.assertIn(f"DeclareLaunchArgument('{name}'", odom_view_launch)
+        self.assertIn("declare_parameter('vehicle_profile'", source)
+        self.assertRegex(launch, r"DeclareLaunchArgument\(\s*'vehicle_profile'")
+        self.assertRegex(odom_view_launch, r"DeclareLaunchArgument\(\s*'vehicle_profile'")
         for legacy_name in (
             'port_name', 'baud_rate', 'odom_frame', 'base_frame', 'imu_frame',
             'max_steering_angle_deg', 'cmd_watchdog_timeout_s', 'reconnect_interval_s',
@@ -415,6 +469,25 @@ class ParserTests(unittest.TestCase):
     def test_project_version_parser_accepts_proto_1_1_fixture(self):
         line = self.data['startup']['firmware_version_response']
         self.assertEqual(DRIVER.ChassisDriver.parse_project_version(line), 'PUBLIC_TEST_FIXTURE')
+        self.assertEqual(
+            DRIVER.ChassisDriver.parse_firmware_version(line),
+            ('PUBLIC_TEST_FIXTURE', '1.1'),
+        )
+
+    def test_profile_status_parser_accepts_exact_contract(self):
+        self.assertEqual(
+            DRIVER.ChassisDriver.parse_profile_status(
+                self.data['startup']['firmware_profile_response']
+            ),
+            {
+                'id': 'red',
+                'schema': 1,
+                'state': 'READY',
+                'motion': True,
+                'writes': True,
+            },
+        )
+        self.assertIsNone(DRIVER.ChassisDriver.parse_profile_status('PROFILE: ID=red'))
 
     def test_c329_response_prefixes_are_ignored(self):
         for line in ('FW_VERSION: synthetic', 'LINK: synthetic', 'ERROR_DETAIL: synthetic', 'link pong ros'):
@@ -543,7 +616,10 @@ class ConnectionLifecycleTests(unittest.TestCase):
         self.data = _fixture()
 
     def test_startup_sequence_matches_fixture(self):
-        serial_conn = _FakeSerial(self.data['startup']['firmware_version_response'])
+        serial_conn = _FakeSerial(
+            self.data['startup']['firmware_version_response'],
+            self.data['startup']['firmware_profile_response'],
+        )
         with mock.patch.object(DRIVER.serial, 'Serial', return_value=serial_conn), mock.patch.object(
             DRIVER.time, 'sleep', return_value=None
         ):
@@ -554,11 +630,12 @@ class ConnectionLifecycleTests(unittest.TestCase):
         self.assertTrue(any(message.startswith('Connected to chassis') for message in self.driver.logger.infos))
 
     def test_failed_initialization_closes_connection_and_does_not_start_reader(self):
-        for failed_command in ('stream sync\n', 's\n'):
+        for failed_command in ('profile get\n', 'stream sync\n', 's\n'):
             with self.subTest(failed_command=failed_command):
                 driver = _driver_shell()
                 serial_conn = _FakeSerial(
                     self.data['startup']['firmware_version_response'],
+                    self.data['startup']['firmware_profile_response'],
                     fail_on_write=failed_command,
                 )
                 with mock.patch.object(DRIVER.serial, 'Serial', return_value=serial_conn), mock.patch.object(
@@ -572,16 +649,54 @@ class ConnectionLifecycleTests(unittest.TestCase):
                 driver.start_reader.assert_not_called()
                 self.assertFalse(any(message.startswith('Connected to chassis') for message in driver.logger.infos))
 
-    def test_firmware_version_query_failure_does_not_block_connection(self):
+    def test_firmware_version_query_failure_blocks_connection(self):
         serial_conn = _FakeSerial(fail_on_write='stream off\n')
         with mock.patch.object(DRIVER.serial, 'Serial', return_value=serial_conn), mock.patch.object(
             DRIVER.time, 'sleep', return_value=None
         ):
             self.driver.ensure_connected()
 
-        self.assertEqual(serial_conn.writes, ['stream sync\n', 's\n', 'link up ros\n'])
-        self.assertTrue(serial_conn.is_open)
-        self.driver.start_reader.assert_called_once_with()
+        self.assertEqual(serial_conn.writes, ['link down ros\n'])
+        self.assertFalse(serial_conn.is_open)
+        self.assertIsNone(self.driver.serial_conn)
+        self.driver.start_reader.assert_not_called()
+
+    def test_unsupported_protocol_and_profile_mismatch_fail_before_stream(self):
+        cases = (
+            (
+                'FW_VERSION: ProjectVer=PUBLIC_TEST_FIXTURE, Proto=2.0',
+                self.data['startup']['firmware_profile_response'],
+                ['stream off\n', 'fw version\n', 'link down ros\n'],
+            ),
+            (
+                self.data['startup']['firmware_version_response'],
+                'PROFILE: ID=blue, Schema=1, State=READY, Motion=Yes, Writes=Yes',
+                ['stream off\n', 'fw version\n', 'profile get\n', 'link down ros\n'],
+            ),
+            (
+                self.data['startup']['firmware_version_response'],
+                'PROFILE: ID=red, Schema=2, State=READY, Motion=Yes, Writes=Yes',
+                ['stream off\n', 'fw version\n', 'profile get\n', 'link down ros\n'],
+            ),
+            (
+                self.data['startup']['firmware_version_response'],
+                'PROFILE: ID=red, Schema=1, State=BACKUP_REQUIRED, Motion=No, Writes=No',
+                ['stream off\n', 'fw version\n', 'profile get\n', 'link down ros\n'],
+            ),
+        )
+        for version_line, profile_line, expected_writes in cases:
+            with self.subTest(version_line=version_line, profile_line=profile_line):
+                driver = _driver_shell()
+                serial_conn = _FakeSerial(version_line, profile_line)
+                with mock.patch.object(
+                    DRIVER.serial, 'Serial', return_value=serial_conn
+                ), mock.patch.object(DRIVER.time, 'sleep', return_value=None):
+                    driver.ensure_connected()
+
+                self.assertEqual(serial_conn.writes, expected_writes)
+                self.assertFalse(serial_conn.is_open)
+                self.assertIsNone(driver.serial_conn)
+                driver.start_reader.assert_not_called()
 
     def test_write_failure_closes_exact_failed_connection(self):
         serial_conn = _FakeSerial(fail_on_write='synthetic\n')
