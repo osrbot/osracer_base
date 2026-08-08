@@ -1002,6 +1002,8 @@ class CiContractTests(unittest.TestCase):
         workflow = WORKFLOW_PATH.read_text(encoding='utf-8')
         self.assertIn('permissions:', workflow)
         self.assertIn('contents: read', workflow)
+        self.assertEqual(workflow.count('branches: [main]'), 2)
+        self.assertNotIn('branches: [main, ros2]', workflow)
         self.assertIn('humble', workflow)
         self.assertIn('jazzy', workflow)
         self.assertIn('ubuntu-22.04', workflow)

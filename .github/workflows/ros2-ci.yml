@@ -2,9 +2,9 @@ name: ROS 2 CI
 
 on:
   push:
-    branches: [main, ros2]
+    branches: [main]
   pull_request:
-    branches: [main, ros2]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
