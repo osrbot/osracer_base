@@ -2,9 +2,21 @@
 
 OSRacer Base 是 OSRacer 的 ROS 2 基础底盘驱动包。它提供速度控制、阿克曼控制、里程计、IMU、RC 原始通道、磁力计和电池状态话题，适合在实车上接入上层导航、遥控或自动驾驶节点。
 
-ROS 2 的当前开发主线为 `main`。`ros1` 仅作为兼容分支，只有确认存在 ROS 1
-需求时才继续维护。现有 Neo 客户交付继续使用完整的
-`osracer/product/neo`，本包不替换该冻结交付线。
+## 当前维护基线
+
+- `main@9b4e1a67ab755fa0a22dca7078b4b98c1b8cc3eb` 是默认分支，也是唯一
+  持续开发的 ROS 2 主线。当前包版本为 `0.2.0`，尚未创建 `0.2.0` tag 或 Release。
+- `ros1@856323b3912a94860352d87f21f0fcf4a7d7b544` 仅用于兼容；没有明确
+  ROS 1 需求时保持不变。
+- 上位机契约保持 Proto 1.1，并显式核对 `neo`、`red`、`blue` 的 ProfileID 和
+  schema。当前 `osracer/main` 固定依赖本提交，不跟随浮动分支。
+- 历史 `v0.1.0` tag 解引用到
+  `c7ba366084a56de32cb994048edd1e633090b69e`；它继续作为发布记录保留，
+  但不是当前开发基线。
+
+开发记录见 [CHANGELOG.md](CHANGELOG.md)。
+
+现有 Neo 客户交付继续使用完整的 `osracer/product/neo`，本包不替换该冻结交付线。
 
 ## 支持环境
 

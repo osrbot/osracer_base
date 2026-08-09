@@ -2,10 +2,25 @@
 
 OSRacer Base is the minimal ROS 2 chassis driver package for OSRacer. It exposes velocity control, Ackermann control, odometry, IMU, raw RC, magnetometer, and battery status topics for real vehicle bringup.
 
-The active ROS 2 development line is `main`. The `ros1` branch is compatibility-only
-and changes only when a ROS 1 requirement is confirmed. Existing Neo customer
-deliveries remain on the complete `osracer/product/neo` stack. This package does
-not replace that frozen delivery line.
+## Maintenance Baseline
+
+- `main@9b4e1a67ab755fa0a22dca7078b4b98c1b8cc3eb` is the default and only
+  active ROS 2 development line. Its package version is `0.2.0`; no `0.2.0`
+  tag or release has been created.
+- `ros1@856323b3912a94860352d87f21f0fcf4a7d7b544` is compatibility-only and
+  remains unchanged unless a concrete ROS 1 requirement is accepted.
+- The host contract is Proto 1.1 with explicit `neo`, `red`, and `blue`
+  ProfileID/schema checks. Current downstream `osracer/main` pins this exact
+  Base commit rather than following a moving branch.
+- The historical `v0.1.0` tag resolves to
+  `c7ba366084a56de32cb994048edd1e633090b69e`; it remains a release record, not
+  the active development baseline.
+
+See [CHANGELOG.md](CHANGELOG.md) for the development record.
+
+Existing Neo customer deliveries remain on the complete
+`osracer/product/neo` stack. This package does not replace that frozen delivery
+line.
 
 ## Requirements
 
