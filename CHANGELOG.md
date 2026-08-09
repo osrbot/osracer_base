@@ -17,6 +17,9 @@ commits and tags remain authoritative for released snapshots.
 - Aligned downstream migration with the accepted
   `osracer@c329c21614f0335d9a8c7a12d2e638a70293052f` behavior and preserved
   its sanitized protocol fixtures.
+- Added a machine-readable public firmware contract containing only Proto 1.1,
+  command units, ProfileID/schema, and hard limits. Host tests require every
+  ROS vehicle profile to remain within those firmware limits.
 
 ### Validation
 

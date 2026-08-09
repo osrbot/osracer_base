@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "protocol": "1.1",
+  "command": {
+    "name": "v",
+    "linear_velocity_unit": "m/s",
+    "steering_angle_unit": "deg"
+  },
+  "profiles": {
+    "blue": {
+      "profile_schema": 1,
+      "hard_limits": {
+        "max_forward_speed_mps": 0.8,
+        "max_reverse_speed_mps": 0.8,
+        "max_steering_angle_deg": 30.0
+      }
+    },
+    "neo": {
+      "profile_schema": 1,
+      "hard_limits": {
+        "max_forward_speed_mps": 6.0,
+        "max_reverse_speed_mps": 6.0,
+        "max_steering_angle_deg": 30.0
+      }
+    },
+    "red": {
+      "profile_schema": 1,
+      "hard_limits": {
+        "max_forward_speed_mps": 6.0,
+        "max_reverse_speed_mps": 6.0,
+        "max_steering_angle_deg": 30.0
+      }
+    }
+  }
+}
