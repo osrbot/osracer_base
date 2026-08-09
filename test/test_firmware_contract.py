@@ -30,6 +30,8 @@ class PublicFirmwareContractTests(unittest.TestCase):
             },
         )
         self.assertEqual(set(self.contract["profiles"]), {"blue", "neo", "red"})
+        for profile in self.contract["profiles"].values():
+            self.assertEqual(set(profile), {"profile_schema"})
 
         serialized = json.dumps(self.contract, sort_keys=True).lower()
         for private_field in (
