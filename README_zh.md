@@ -13,8 +13,8 @@ OSRacer Base 是 OSRacer 的 ROS 2 基础底盘驱动包。它提供速度控制
   schema。下游 `osracer/main` 固定依赖不可变 Base commit，不跟随浮动分支。
 - 脱敏后的机器可读固件边界位于
   `test/fixtures/proto_1_1/firmware_contract.json`，只包含协议、命令单位、
-  ProfileID/schema 和固件硬上限，不包含固件源码、GPIO、PID、NVS、硬件身份
-  或车辆标定数据。
+  ProfileID/schema，不包含固件源码、硬上限、GPIO、PID、NVS、硬件身份或
+  车辆标定数据。
 - 历史 `v0.1.0` tag 解引用到
   `c7ba366084a56de32cb994048edd1e633090b69e`；它继续作为发布记录保留，
   但不是当前开发基线。

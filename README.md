@@ -15,7 +15,8 @@ OSRacer Base is the minimal ROS 2 chassis driver package for OSRacer. It exposes
   commit rather than following a moving branch.
 - The sanitized machine-readable firmware boundary is
   `test/fixtures/proto_1_1/firmware_contract.json`; it intentionally excludes
-  firmware source, GPIO, PID, NVS, hardware identity, and calibration data.
+  firmware source, limits, GPIO, PID, NVS, hardware identity, and calibration
+  data.
 - The historical `v0.1.0` tag resolves to
   `c7ba366084a56de32cb994048edd1e633090b69e`; it remains a release record, not
   the active development baseline.

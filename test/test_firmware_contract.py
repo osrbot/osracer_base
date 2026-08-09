@@ -1,5 +1,4 @@
 import json
-import math
 import unittest
 from pathlib import Path
 
@@ -46,28 +45,16 @@ class PublicFirmwareContractTests(unittest.TestCase):
         ):
             self.assertNotIn(private_field, serialized)
 
-    def test_ros_profiles_stay_within_firmware_hard_limits(self):
+    def test_ros_profiles_match_public_firmware_identity(self):
         for profile_id, firmware in self.contract["profiles"].items():
             with self.subTest(profile=profile_id):
                 ros_document = yaml.safe_load(
                     (PROFILE_DIR / f"{profile_id}.yaml").read_text(encoding="utf-8")
                 )
                 ros_profile = ros_document["/**"]["ros__parameters"]
-                limits = firmware["hard_limits"]
-
                 self.assertEqual(ros_profile["vehicle_profile"], profile_id)
                 self.assertEqual(
                     ros_profile["profile_schema"], firmware["profile_schema"]
-                )
-                self.assertLessEqual(
-                    ros_profile["max_speed"], limits["max_forward_speed_mps"]
-                )
-                self.assertLessEqual(
-                    ros_profile["max_speed"], limits["max_reverse_speed_mps"]
-                )
-                self.assertLessEqual(
-                    ros_profile["max_steering_angle"],
-                    math.radians(limits["max_steering_angle_deg"]) + 1e-9,
                 )
 
 
