@@ -11,8 +11,8 @@ OSRacer Base is the minimal ROS 2 chassis driver package for OSRacer. It exposes
 - `ros1@856323b3912a94860352d87f21f0fcf4a7d7b544` is compatibility-only and
   remains unchanged unless a concrete ROS 1 requirement is accepted.
 - The host contract is Proto 1.1 with explicit `neo`, `red`, and `blue`
-  ProfileID/schema checks. Current downstream `osracer/main` pins this exact
-  Base commit rather than following a moving branch.
+  ProfileID/schema checks. Downstream `osracer/main` pins an immutable Base
+  commit rather than following a moving branch.
 - The sanitized machine-readable firmware boundary is
   `test/fixtures/proto_1_1/firmware_contract.json`; it intentionally excludes
   firmware source, GPIO, PID, NVS, hardware identity, and calibration data.

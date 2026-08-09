@@ -25,9 +25,8 @@ commits and tags remain authoritative for released snapshots.
 
 - GitHub Actions builds and tests `main` on ROS 2 Humble / Ubuntu 22.04 and
   ROS 2 Jazzy / Ubuntu 24.04.
-- `osracer/main` pins
-  `osracer_base@9b4e1a67ab755fa0a22dca7078b4b98c1b8cc3eb` for reproducible
-  integration.
+- `osracer/main` pins an immutable `osracer_base` commit for reproducible
+  integration rather than following a moving branch.
 
 ### Documentation
 

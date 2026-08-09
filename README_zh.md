@@ -10,7 +10,7 @@ OSRacer Base 是 OSRacer 的 ROS 2 基础底盘驱动包。它提供速度控制
 - `ros1@856323b3912a94860352d87f21f0fcf4a7d7b544` 仅用于兼容；没有明确
   ROS 1 需求时保持不变。
 - 上位机契约保持 Proto 1.1，并显式核对 `neo`、`red`、`blue` 的 ProfileID 和
-  schema。当前 `osracer/main` 固定依赖本提交，不跟随浮动分支。
+  schema。下游 `osracer/main` 固定依赖不可变 Base commit，不跟随浮动分支。
 - 脱敏后的机器可读固件边界位于
   `test/fixtures/proto_1_1/firmware_contract.json`，只包含协议、命令单位、
   ProfileID/schema 和固件硬上限，不包含固件源码、GPIO、PID、NVS、硬件身份
