@@ -17,14 +17,16 @@ commits and tags remain authoritative for released snapshots.
 - Aligned downstream migration with the accepted
   `osracer@c329c21614f0335d9a8c7a12d2e638a70293052f` behavior and preserved
   its sanitized protocol fixtures.
+- Added a machine-readable public firmware contract containing only Proto 1.1,
+  command units, and ProfileID/schema. Firmware hard limits remain private;
+  private firmware CI verifies compatibility without publishing their values.
 
 ### Validation
 
 - GitHub Actions builds and tests `main` on ROS 2 Humble / Ubuntu 22.04 and
   ROS 2 Jazzy / Ubuntu 24.04.
-- `osracer/main` pins
-  `osracer_base@9b4e1a67ab755fa0a22dca7078b4b98c1b8cc3eb` for reproducible
-  integration.
+- `osracer/main` pins an immutable `osracer_base` commit for reproducible
+  integration rather than following a moving branch.
 
 ### Documentation
 

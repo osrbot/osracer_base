@@ -15,3 +15,7 @@ for `osracer_base/main`.
 - Current mainline profile identity checks cover `neo`, `red`, and `blue` with
   schema `1`; the sanitized fixture values do not contain private firmware
   implementation details or product calibration.
+- `firmware_contract.json` is the deliberately small cross-repository surface:
+  protocol, command units, and ProfileID/schema only. Private firmware CI
+  regenerates that public subset and separately verifies the already-public ROS
+  profile limits without publishing firmware limits or private parameters.
