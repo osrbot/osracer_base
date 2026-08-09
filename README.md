@@ -4,9 +4,10 @@ OSRacer Base is the minimal ROS 2 chassis driver package for OSRacer. It exposes
 
 ## Maintenance Baseline
 
-- `main@9b4e1a67ab755fa0a22dca7078b4b98c1b8cc3eb` is the default and only
-  active ROS 2 development line. Its package version is `0.2.0`; no `0.2.0`
-  tag or release has been created.
+- `main` is the default and only active ROS 2 development line. The
+  profile-aligned code baseline reviewed on 2026-08-09 was
+  `9b4e1a67ab755fa0a22dca7078b4b98c1b8cc3eb`. Its package version is `0.2.0`;
+  no `0.2.0` tag or release has been created.
 - `ros1@856323b3912a94860352d87f21f0fcf4a7d7b544` is compatibility-only and
   remains unchanged unless a concrete ROS 1 requirement is accepted.
 - The host contract is Proto 1.1 with explicit `neo`, `red`, and `blue`

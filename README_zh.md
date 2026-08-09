@@ -4,8 +4,9 @@ OSRacer Base 是 OSRacer 的 ROS 2 基础底盘驱动包。它提供速度控制
 
 ## 当前维护基线
 
-- `main@9b4e1a67ab755fa0a22dca7078b4b98c1b8cc3eb` 是默认分支，也是唯一
-  持续开发的 ROS 2 主线。当前包版本为 `0.2.0`，尚未创建 `0.2.0` tag 或 Release。
+- `main` 是默认分支，也是唯一持续开发的 ROS 2 主线。2026-08-09 审核的
+  profile 对齐代码基线为 `9b4e1a67ab755fa0a22dca7078b4b98c1b8cc3eb`。
+  当前包版本为 `0.2.0`，尚未创建 `0.2.0` tag 或 Release。
 - `ros1@856323b3912a94860352d87f21f0fcf4a7d7b544` 仅用于兼容；没有明确
   ROS 1 需求时保持不变。
 - 上位机契约保持 Proto 1.1，并显式核对 `neo`、`red`、`blue` 的 ProfileID 和
