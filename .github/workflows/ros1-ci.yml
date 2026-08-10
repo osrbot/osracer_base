@@ -1,0 +1,72 @@
+name: ROS 1 CI
+
+on:
+  push:
+    branches: [ros1]
+  pull_request:
+    branches: [ros1]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: ros1-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-check:
+    name: Noetic / Ubuntu 20.04
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    container:
+      image: ros:noetic-ros-base-focal@sha256:4f01fa743be43da0e14ddf2ac29b5118d9c0eb4057c9761c13303b8a52fa9c4f
+
+    steps:
+      - name: Check out ROS 1 source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          path: ros1_ws/src/osracer_base
+          persist-credentials: false
+
+      - name: Install package dependencies
+        working-directory: ros1_ws
+        run: |
+          set -euo pipefail
+          apt-get update
+          rosdep update --rosdistro noetic
+          rosdep install --from-paths src --ignore-src --rosdistro noetic -y
+
+      - name: Run static checks
+        working-directory: ros1_ws/src/osracer_base
+        run: |
+          set -euo pipefail
+          export PYTHONPYCACHEPREFIX="${RUNNER_TEMP}/osracer_base-ros1-pycache"
+          python3 -m compileall -q setup.py osracer_base scripts
+          python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          ET.parse('package.xml')
+          for launch_file in sorted(Path('launch').glob('*.launch')):
+              ET.parse(launch_file)
+          PY
+
+      - name: Build catkin workspace
+        working-directory: ros1_ws
+        run: |
+          set -eo pipefail
+          source /opt/ros/noetic/setup.bash
+          catkin_make --cmake-args -DCMAKE_BUILD_TYPE=Release
+
+      - name: Resolve launch files
+        working-directory: ros1_ws
+        run: |
+          set -eo pipefail
+          source /opt/ros/noetic/setup.bash
+          source devel/setup.bash
+          roslaunch --files src/osracer_base/launch/chassis_driver.launch
