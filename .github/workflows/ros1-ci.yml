@@ -59,14 +59,14 @@ jobs:
       - name: Build catkin workspace
         working-directory: ros1_ws
         run: |
-          set -euo pipefail
+          set -eo pipefail
           source /opt/ros/noetic/setup.bash
           catkin_make --cmake-args -DCMAKE_BUILD_TYPE=Release
 
       - name: Resolve launch files
         working-directory: ros1_ws
         run: |
-          set -euo pipefail
+          set -eo pipefail
           source /opt/ros/noetic/setup.bash
           source devel/setup.bash
           roslaunch --files src/osracer_base/launch/chassis_driver.launch
