@@ -407,7 +407,7 @@ class PublicApiTests(unittest.TestCase):
         package_xml = (REPO_ROOT / 'package.xml').read_text(encoding='utf-8')
         self.assertIn('<depend>std_msgs</depend>', package_xml)
         self.assertIn('<build_type>ament_python</build_type>', package_xml)
-        self.assertIn('<buildtool_depend>ament_python</buildtool_depend>', package_xml)
+        self.assertNotIn('<buildtool_depend>ament_python</buildtool_depend>', package_xml)
         self.assertIn('<maintainer email="winter@osrbot.com">osrbot</maintainer>', package_xml)
         setup_source = (REPO_ROOT / 'setup.py').read_text(encoding='utf-8')
         self.assertIn("maintainer_email='winter@osrbot.com'", setup_source)

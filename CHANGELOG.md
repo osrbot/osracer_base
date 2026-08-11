@@ -20,8 +20,8 @@ commits and tags remain authoritative for released snapshots.
 - Added a machine-readable public firmware contract containing only Proto 1.1,
   command units, and ProfileID/schema. Firmware hard limits remain private;
   private firmware CI verifies compatibility without publishing their values.
-- Declared the required `ament_python` build tool explicitly and standardized
-  the public maintenance contact as `winter@osrbot.com`.
+- Standardized the public maintenance contact as `winter@osrbot.com` while
+  retaining `ament_python` as the package build type.
 
 ### Validation
 
