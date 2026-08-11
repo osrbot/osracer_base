@@ -5,11 +5,12 @@ OSRacer Base is the minimal ROS 2 chassis driver package for OSRacer. It exposes
 ## Maintenance Baseline
 
 - `main` is the default and only active ROS 2 development line. The
-  profile-aligned code baseline reviewed on 2026-08-09 was
-  `9b4e1a67ab755fa0a22dca7078b4b98c1b8cc3eb`. Its package version is `0.2.0`;
+  profile-alignment work entered `main` at
+  `9b4e1a67ab755fa0a22dca7078b4b98c1b8cc3eb`. The package version is `0.2.0`;
   no `0.2.0` tag or release has been created.
-- `ros1@856323b3912a94860352d87f21f0fcf4a7d7b544` is compatibility-only and
-  remains unchanged unless a concrete ROS 1 requirement is accepted.
+- `ros1@c1a0162556f9e9c10da817bce5a93f2a5b13b634` is compatibility-only. Its
+  current change is maintenance CI; ROS 1 runtime behavior remains unchanged
+  unless a concrete ROS 1 requirement is accepted.
 - The host contract is Proto 1.1 with explicit `neo`, `red`, and `blue`
   ProfileID/schema checks. Downstream `osracer/main` pins an immutable Base
   commit rather than following a moving branch.
@@ -26,6 +27,24 @@ See [CHANGELOG.md](CHANGELOG.md) for the development record.
 Existing Neo customer deliveries remain on the complete
 `osracer/product/neo` stack. This package does not replace that frozen delivery
 line.
+
+## Repository Chain and Parameter Ownership
+
+The approved vehicle specification is the physical source of truth. Base does
+not infer new dimensions from fixtures or telemetry:
+
+1. `osrcore/main` owns firmware profiles, protocol, effective odometry
+   parameters, control, NVS, and hardware safety behavior.
+2. `osracer_base/main` consumes the sanitized firmware contract and owns the
+   ROS chassis driver plus wheelbase, ROS limits, frames, and battery display
+   mapping.
+3. `osracer/main` pins an exact Base commit and owns bringup and ROS feature
+   integration.
+4. `osracer_lab/main` consumes public ROS interfaces and checked geometry for
+   simulation, policies, and Sim2Real development.
+
+Firmware-only values are not copied into this public repository. Geometry
+repeated by downstream simulation is a checked projection, not another source.
 
 ## Requirements
 
@@ -161,7 +180,7 @@ Both control topics can be used. The driver applies the most recent command. If 
 | `vehicle_profile` | required | Selected firmware and chassis profile |
 | `profile_schema` | profile file | Expected firmware profile schema |
 | `wheelbase` | profile file | Vehicle wheelbase in meters |
-| `max_speed` | profile file | Conservative ROS control speed limit in m/s |
+| `max_speed` | profile file | ROS-side profile speed ceiling in m/s |
 | `speed_mode` | profile file | Speed mode, supports `high` and `low` |
 | `max_steering_angle` | profile file | Maximum steering angle in radians |
 | `cmd_timeout` | `0.5` | Command timeout in seconds |
@@ -196,6 +215,11 @@ The installed files under `config/vehicles` contain only ROS-side chassis values
 | `neo` | 0.285 m | 4.64 m/s | 30 deg |
 | `red` | 0.285 m | 4.64 m/s | 30 deg |
 | `blue` | 0.325 m | 0.8 m/s | 30 deg |
+
+These are the maintained ROS values for the current vehicles and do not require
+another measurement pass. In particular, `4.64 m/s` is the ROS-side profile
+ceiling for Neo/Red, not the private firmware hard limit or a recommended
+first-drive speed. Applications may apply a lower operational limit.
 
 Neo and Red keep separate identities even though their current ROS-side numeric
 values match. Firmware-only values such as GPIO, encoder PPR, gear ratio, wheel

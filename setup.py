@@ -20,7 +20,7 @@ setup(
     tests_require=['pytest'],
     zip_safe=True,
     maintainer='osrbot',
-    maintainer_email='osrbot@osrbot.com',
+    maintainer_email='winter@osrbot.com',
     description='Minimal ROS 2 chassis driver for OSRacer.',
     license='MIT',
     entry_points={

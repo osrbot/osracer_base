@@ -10,7 +10,9 @@ for `osracer_base/main`.
 - All identifiers and numeric telemetry values are synthetic.
 - No firmware source, customer data, device serial number, calibration value, or site log is included.
 - The samples are test evidence for framing, command order, RC/magnetometer units, covariance defaults, and timeout behavior; they are not vehicle profiles.
-- Vehicle wheelbase, speed limits, steering limits, and other physical parameters must come from explicit `osracer_base` configuration.
+- ROS-side wheelbase, speed ceiling, and steering limit come from explicit
+  `osracer_base` configuration. Firmware-effective parameters remain owned by
+  `osrcore`; both are projections of the approved vehicle specification.
 - The accepted synchronized telemetry frame has exactly 18 whitespace-separated fields.
 - Current mainline profile identity checks cover `neo`, `red`, and `blue` with
   schema `1`; the sanitized fixture values do not contain private firmware

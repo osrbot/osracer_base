@@ -11,7 +11,7 @@ commits and tags remain authoritative for released snapshots.
   `ros1` as a compatibility-only branch.
 - Added explicit `neo`, `red`, and `blue` vehicle profile files and fail-closed
   firmware ProfileID/schema checks while keeping the public Proto 1.1 framing.
-- Kept only ROS-side wheelbase, conservative speed limit, steering limit,
+- Kept only ROS-side wheelbase, profile speed ceiling, steering limit,
   frames, and battery display mapping in Base; firmware GPIO, encoder, PID,
   PWM, NVS, and hard safety settings remain outside this repository.
 - Aligned downstream migration with the accepted
@@ -20,6 +20,8 @@ commits and tags remain authoritative for released snapshots.
 - Added a machine-readable public firmware contract containing only Proto 1.1,
   command units, and ProfileID/schema. Firmware hard limits remain private;
   private firmware CI verifies compatibility without publishing their values.
+- Standardized the public maintenance contact as `winter@osrbot.com` while
+  retaining `ament_python` as the package build type.
 
 ### Validation
 
@@ -32,6 +34,12 @@ commits and tags remain authoritative for released snapshots.
 
 - Updated the maintenance baseline, clarified the historical c329 fixture
   anchor, and documented that `0.2.0` has no tag or release yet.
+- Synchronized the documented `main` and maintenance-only `ros1` revisions with
+  the current remote branches, and distinguished ROS profile ceilings from
+  firmware hard limits and application-level operating clamps.
+- Documented the one-way Core to Base to OSRacer to Lab dependency chain and
+  clarified that Base stores the ROS projection of the approved vehicle
+  specification rather than defining an independent physical baseline.
 
 ## 0.1.0 — 2026-08-07
 

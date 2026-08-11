@@ -5,7 +5,7 @@
   <version>0.2.0</version>
   <description>Minimal ROS 2 chassis driver for OSRacer.</description>
 
-  <maintainer email="osrbot@osrbot.com">osrbot</maintainer>
+  <maintainer email="winter@osrbot.com">osrbot</maintainer>
   <license>MIT</license>
 
   <depend>rclpy</depend>
