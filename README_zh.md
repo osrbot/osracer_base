@@ -4,11 +4,11 @@ OSRacer Base 是 OSRacer 的 ROS 2 基础底盘驱动包。它提供速度控制
 
 ## 当前维护基线
 
-- `main` 是默认分支，也是唯一持续开发的 ROS 2 主线。2026-08-09 审核的
-  profile 对齐代码基线为 `9b4e1a67ab755fa0a22dca7078b4b98c1b8cc3eb`。
-  当前包版本为 `0.2.0`，尚未创建 `0.2.0` tag 或 Release。
-- `ros1@856323b3912a94860352d87f21f0fcf4a7d7b544` 仅用于兼容；没有明确
-  ROS 1 需求时保持不变。
+- `main` 是默认分支，也是唯一持续开发的 ROS 2 主线。profile 对齐改动最初在
+  `9b4e1a67ab755fa0a22dca7078b4b98c1b8cc3eb` 进入主线。当前包版本为
+  `0.2.0`，尚未创建 `0.2.0` tag 或 Release。
+- `ros1@c1a0162556f9e9c10da817bce5a93f2a5b13b634` 仅用于兼容；当前新增内容
+  只是维护 CI，没有改变 ROS 1 运行行为。没有明确 ROS 1 需求时保持不变。
 - 上位机契约保持 Proto 1.1，并显式核对 `neo`、`red`、`blue` 的 ProfileID 和
   schema。下游 `osracer/main` 固定依赖不可变 Base commit，不跟随浮动分支。
 - 脱敏后的机器可读固件边界位于
@@ -22,6 +22,19 @@ OSRacer Base 是 OSRacer 的 ROS 2 基础底盘驱动包。它提供速度控制
 开发记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 现有 Neo 客户交付继续使用完整的 `osracer/product/neo`，本包不替换该冻结交付线。
+
+## 四仓链路与参数归属
+
+已确认的产品规格是物理参数基准；Base 不会根据 fixture 或遥测自行推导新尺寸：
+
+1. `osrcore/main` 负责固件 profile、协议、有效里程参数、控制、NVS 和硬件安全行为。
+2. `osracer_base/main` 只消费脱敏固件契约，负责 ROS 底盘驱动，以及轴距、ROS
+   限值、frame 和电池显示映射。
+3. `osracer/main` 固定精确 Base commit，负责 bringup 和 ROS 功能集成。
+4. `osracer_lab/main` 通过公开 ROS 接口和受检几何开展仿真、策略和 Sim2Real 开发。
+
+固件专用参数不复制到本公开仓库。下游仿真中重复的几何值是受检投影，不是另一个
+参数来源。
 
 ## 支持环境
 
@@ -155,7 +168,7 @@ sensor_msgs/msg/BatteryState
 | `vehicle_profile` | 必填 | 选择固件和底盘 profile |
 | `profile_schema` | 车型文件 | 预期固件 profile schema |
 | `wheelbase` | 车型文件 | 车辆轴距，单位 m |
-| `max_speed` | 车型文件 | ROS 侧保守速度上限，单位 m/s |
+| `max_speed` | 车型文件 | ROS 侧 Profile 速度上限，单位 m/s |
 | `speed_mode` | 车型文件 | 速度模式，支持 `high` 和 `low` |
 | `max_steering_angle` | 车型文件 | 最大转向角，单位 rad |
 | `cmd_timeout` | `0.5` | 控制超时时间，单位 s |
@@ -190,6 +203,10 @@ sensor_msgs/msg/BatteryState
 | `neo` | 0.285 m | 4.64 m/s | 30 deg |
 | `red` | 0.285 m | 4.64 m/s | 30 deg |
 | `blue` | 0.325 m | 0.8 m/s | 30 deg |
+
+这些是当前车型已经确定的 ROS 配置，不需要再次测量。其中 Neo/Red 的
+`4.64 m/s` 是 ROS Profile 速度上限，不等于私有固件硬限速，也不是首次实车测试
+的推荐速度；具体应用仍可使用更低的运行限速。
 
 Neo 和 Red 当前的 ROS 数值相同，但仍保留独立身份。GPIO、编码器 PPR、齿比、
 轮径、PID、PWM、NVS 和固件硬安全上限等下位机参数不会复制到这里。
