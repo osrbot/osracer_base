@@ -271,6 +271,8 @@ def _driver_shell():
     driver.publish_rc_enabled = True
     driver.publish_mag_enabled = True
     driver.publish_battery_enabled = True
+    driver.nonfinite_frame_counts = {}
+    driver.nonfinite_last_warning = {}
     driver.rc_pub = mock.Mock()
     driver.mag_pub = mock.Mock()
     driver.battery_pub = mock.Mock()
@@ -509,6 +511,27 @@ class SensorPublicationTests(unittest.TestCase):
         self.driver.get_clock = lambda: self.driver.clock
         self.data = _fixture()
 
+    def configure_motion_publishers(self):
+        covariance = self.data['covariance_diagonals']
+        self.driver.odom_frame_id = 'odom'
+        self.driver.base_frame_id = 'base_footprint'
+        self.driver.imu_frame_id = 'imu_link'
+        self.driver.tf_broadcaster = mock.Mock()
+        self.driver.odom_pub = mock.Mock()
+        self.driver.imu_pub = mock.Mock()
+        self.driver.odom_twist_covariance = DRIVER.ChassisDriver.diagonal_covariance_6d(
+            covariance['odom_twist']
+        )
+        self.driver.imu_orientation_covariance = DRIVER.ChassisDriver.diagonal_covariance(
+            covariance['imu_orientation']
+        )
+        self.driver.imu_angular_velocity_covariance = DRIVER.ChassisDriver.diagonal_covariance(
+            covariance['imu_angular_velocity']
+        )
+        self.driver.imu_linear_acceleration_covariance = DRIVER.ChassisDriver.diagonal_covariance(
+            covariance['imu_linear_acceleration']
+        )
+
     def test_rc_frame_publishes_all_channels(self):
         self.driver.publish_rc_enabled = True
         self.driver.rc_pub = mock.Mock()
@@ -541,35 +564,105 @@ class SensorPublicationTests(unittest.TestCase):
         self.assertAlmostEqual(message.magnetic_field.y, -0.5e-4)
         self.assertAlmostEqual(message.magnetic_field.z, 1.0e-4)
 
-    def test_motion_messages_include_c329_covariances(self):
-        covariance = self.data['covariance_diagonals']
-        self.driver.odom_frame_id = 'odom'
-        self.driver.base_frame_id = 'base_footprint'
-        self.driver.imu_frame_id = 'imu_link'
-        self.driver.tf_broadcaster = None
-        self.driver.odom_pub = mock.Mock()
-        self.driver.imu_pub = mock.Mock()
-        self.driver.odom_twist_covariance = DRIVER.ChassisDriver.diagonal_covariance_6d(
-            covariance['odom_twist']
+    def test_sync_frame_maps_every_field_with_one_timestamp(self):
+        self.configure_motion_publishers()
+        self.driver.publish_motion_state(
+            's 1 2 3 4 5 6 7 0.1 0.2 0.3 0.4 8 9 10 11 12 13'.split()
         )
-        self.driver.imu_orientation_covariance = DRIVER.ChassisDriver.diagonal_covariance(
-            covariance['imu_orientation']
-        )
-        self.driver.imu_angular_velocity_covariance = DRIVER.ChassisDriver.diagonal_covariance(
-            covariance['imu_angular_velocity']
-        )
-        self.driver.imu_linear_acceleration_covariance = DRIVER.ChassisDriver.diagonal_covariance(
-            covariance['imu_linear_acceleration']
-        )
-
-        self.driver.publish_motion_state(self.data['telemetry']['sync'].split())
 
         odom = self.driver.odom_pub.publish.call_args.args[0]
         imu = self.driver.imu_pub.publish.call_args.args[0]
+        transform = self.driver.tf_broadcaster.sendTransform.call_args.args[0]
+
+        self.assertEqual(odom.header.stamp, 123)
+        self.assertEqual(imu.header.stamp, odom.header.stamp)
+        self.assertEqual(transform.header.stamp, odom.header.stamp)
+        self.assertEqual(
+            (odom.pose.pose.position.x, odom.pose.pose.position.y, odom.pose.pose.position.z),
+            (1.0, 2.0, 3.0),
+        )
+        self.assertEqual(
+            (odom.twist.twist.linear.x, odom.twist.twist.linear.y, odom.twist.twist.linear.z),
+            (4.0, 5.0, 6.0),
+        )
+        self.assertEqual(
+            (
+                odom.pose.pose.orientation.x,
+                odom.pose.pose.orientation.y,
+                odom.pose.pose.orientation.z,
+                odom.pose.pose.orientation.w,
+            ),
+            (0.1, 0.2, 0.3, 0.4),
+        )
+        self.assertEqual(
+            (imu.linear_acceleration.x, imu.linear_acceleration.y, imu.linear_acceleration.z),
+            (8.0, 9.0, 10.0),
+        )
+        self.assertEqual(
+            (imu.angular_velocity.x, imu.angular_velocity.y, imu.angular_velocity.z),
+            (11.0, 12.0, 13.0),
+        )
+        self.assertEqual(
+            (
+                transform.transform.translation.x,
+                transform.transform.translation.y,
+                transform.transform.translation.z,
+            ),
+            (1.0, 2.0, 3.0),
+        )
+        self.assertEqual(
+            (
+                transform.transform.rotation.x,
+                transform.transform.rotation.y,
+                transform.transform.rotation.z,
+                transform.transform.rotation.w,
+            ),
+            (0.1, 0.2, 0.3, 0.4),
+        )
         self.assertEqual(odom.twist.covariance, self.driver.odom_twist_covariance)
         self.assertEqual(imu.orientation_covariance, self.driver.imu_orientation_covariance)
         self.assertEqual(imu.angular_velocity_covariance, self.driver.imu_angular_velocity_covariance)
         self.assertEqual(imu.linear_acceleration_covariance, self.driver.imu_linear_acceleration_covariance)
+
+    def test_nonfinite_sync_values_drop_the_entire_frame(self):
+        self.configure_motion_publishers()
+        valid = 's 1 2 3 4 5 6 7 0.1 0.2 0.3 0.4 8 9 10 11 12 13'.split()
+        for token in ('nan', 'inf', '-inf'):
+            for index in range(1, len(valid)):
+                with self.subTest(token=token, index=index):
+                    parts = list(valid)
+                    parts[index] = token
+                    self.driver.publish_motion_state(parts)
+                    self.driver.odom_pub.publish.assert_not_called()
+                    self.driver.imu_pub.publish.assert_not_called()
+                    self.driver.tf_broadcaster.sendTransform.assert_not_called()
+
+    def test_nonfinite_mag_and_battery_values_are_not_published(self):
+        self.driver.publish_mag_enabled = True
+        self.driver.mag_pub = mock.Mock()
+        self.driver.publish_battery_enabled = True
+        self.driver.battery_pub = mock.Mock()
+
+        self.driver.publish_magnetometer('m nan 0.0 0.0'.split())
+        self.driver.publish_battery(math.inf)
+
+        self.driver.mag_pub.publish.assert_not_called()
+        self.driver.battery_pub.publish.assert_not_called()
+
+    def test_nonfinite_warning_is_counted_and_rate_limited(self):
+        self.configure_motion_publishers()
+        invalid = 's nan 2 3 4 5 6 7 0.1 0.2 0.3 0.4 8 9 10 11 12 13'.split()
+        with mock.patch.object(DRIVER.time, 'monotonic', side_effect=[0.0, 1.0, 6.0]):
+            for _ in range(3):
+                self.driver.publish_motion_state(invalid)
+
+        self.assertEqual(
+            self.driver.logger.warnings,
+            [
+                "Dropped non-finite 's' telemetry frame (count=1)",
+                "Dropped non-finite 's' telemetry frame (count=3)",
+            ],
+        )
 
     def test_covariance_helpers_reject_wrong_lengths(self):
         with self.assertRaisesRegex(ValueError, 'exactly 3'):

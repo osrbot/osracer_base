@@ -7,6 +7,9 @@ commits and tags remain authoritative for released snapshots.
 
 ### Changed
 
+- Rejects complete telemetry frames containing non-finite floating-point values
+  before publishing ROS messages and rate-limits the corresponding diagnostics.
+
 - On 2026-08-09, made `main` the default ROS 2 development line and retained
   `ros1` as a compatibility-only branch.
 - Added explicit `neo`, `red`, and `blue` vehicle profile files and fail-closed
@@ -24,6 +27,11 @@ commits and tags remain authoritative for released snapshots.
   retaining `ament_python` as the package build type.
 
 ### Validation
+
+- Adds a distinct-value Proto 1.1 synchronized-frame regression that verifies
+  every Odom, IMU, and TF field uses the expected mapping and one shared stamp.
+- Covers NaN and infinity rejection for synchronized motion, magnetometer, and
+  battery telemetry.
 
 - GitHub Actions builds and tests `main` on ROS 2 Humble / Ubuntu 22.04 and
   ROS 2 Jazzy / Ubuntu 24.04.
