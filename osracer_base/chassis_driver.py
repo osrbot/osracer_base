@@ -24,6 +24,7 @@ DEFAULT_MAX_SPEED = 0.8
 LOW_SPEED_RATIO = 0.5
 SUPPORTED_PROTOCOL = '1.1'
 SERIAL_ERRORS = (serial.SerialException, OSError, ValueError, TypeError, termios.error)
+NONFINITE_WARNING_INTERVAL_S = 5.0
 
 
 class ChassisDriver(Node):
@@ -137,6 +138,8 @@ class ChassisDriver(Node):
         self.shutdown_event = threading.Event()
         self.last_cmd_time = self.get_clock().now()
         self.remote_control_active = None
+        self.nonfinite_frame_counts = {}
+        self.nonfinite_last_warning = {}
 
         self.create_timer(self.reconnect_interval, self.ensure_connected)
         self.create_timer(0.1, self.watchdog_check)
@@ -482,12 +485,15 @@ class ChassisDriver(Node):
     def publish_magnetometer(self, parts):
         if not self.publish_mag_enabled or self.mag_pub is None:
             return
+        values = self.parse_finite_telemetry('m', parts[1:])
+        if values is None:
+            return
         msg = MagneticField()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = self.mag_frame_id
-        msg.magnetic_field.x = float(parts[1]) * 1e-4
-        msg.magnetic_field.y = float(parts[2]) * 1e-4
-        msg.magnetic_field.z = float(parts[3]) * 1e-4
+        msg.magnetic_field.x = values[0] * 1e-4
+        msg.magnetic_field.y = values[1] * 1e-4
+        msg.magnetic_field.z = values[2] * 1e-4
         self.mag_pub.publish(msg)
 
     def update_control_source(self, parts):
@@ -504,11 +510,14 @@ class ChassisDriver(Node):
             self.get_logger().info("Serial control is active")
 
     def publish_motion_state(self, parts):
-        px, py, pz = float(parts[1]), float(parts[2]), float(parts[3])
-        vx, vy, vz = float(parts[4]), float(parts[5]), float(parts[6])
-        qx, qy, qz, qw = float(parts[8]), float(parts[9]), float(parts[10]), float(parts[11])
-        ax, ay, az = float(parts[12]), float(parts[13]), float(parts[14])
-        gx, gy, gz = float(parts[15]), float(parts[16]), float(parts[17])
+        values = self.parse_finite_telemetry('s', parts[1:])
+        if values is None:
+            return
+        px, py, pz = values[0:3]
+        vx, vy, vz = values[3:6]
+        qx, qy, qz, qw = values[7:11]
+        ax, ay, az = values[11:14]
+        gx, gy, gz = values[14:17]
 
         stamp = self.get_clock().now().to_msg()
 
@@ -561,6 +570,10 @@ class ChassisDriver(Node):
     def publish_battery(self, voltage):
         if not self.publish_battery_enabled or self.battery_pub is None:
             return
+        values = self.parse_finite_telemetry('b', [voltage])
+        if values is None:
+            return
+        voltage = values[0]
         msg = BatteryState()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.voltage = voltage
@@ -568,6 +581,22 @@ class ChassisDriver(Node):
             pct = (voltage - self.battery_voltage_min) / (self.battery_voltage_max - self.battery_voltage_min)
             msg.percentage = self.clamp(pct, 0.0, 1.0)
         self.battery_pub.publish(msg)
+
+    def parse_finite_telemetry(self, command, raw_values):
+        values = [float(value) for value in raw_values]
+        if all(math.isfinite(value) for value in values):
+            return values
+
+        count = self.nonfinite_frame_counts.get(command, 0) + 1
+        self.nonfinite_frame_counts[command] = count
+        now = time.monotonic()
+        last_warning = self.nonfinite_last_warning.get(command)
+        if last_warning is None or now - last_warning >= NONFINITE_WARNING_INTERVAL_S:
+            self.nonfinite_last_warning[command] = now
+            self.get_logger().warning(
+                f"Dropped non-finite '{command}' telemetry frame (count={count})"
+            )
+        return None
 
     @staticmethod
     def diagonal_covariance(diagonal):
