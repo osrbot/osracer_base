@@ -1,291 +1,265 @@
 # OSRacer Base
 
-OSRacer Base is the minimal ROS 2 chassis driver package for OSRacer. It exposes velocity control, Ackermann control, odometry, IMU, raw RC, magnetometer, and battery status topics for real vehicle bringup.
+<!-- markdownlint-disable MD013 MD033 -->
 
-## Maintenance Baseline
+<p align="center">
+  <a href="./README.md">English</a> ·
+  <a href="./README_zh.md">简体中文</a>
+</p>
 
-- `main` is the default and only active ROS 2 development line. The
-  profile-alignment work entered `main` at
-  `9b4e1a67ab755fa0a22dca7078b4b98c1b8cc3eb`. The package version is `0.2.0`;
-  no `0.2.0` tag or release has been created.
-- `ros1@c1a0162556f9e9c10da817bce5a93f2a5b13b634` is compatibility-only. Its
-  current change is maintenance CI; ROS 1 runtime behavior remains unchanged
-  unless a concrete ROS 1 requirement is accepted.
-- The host contract is Proto 1.1 with explicit `neo`, `red`, and `blue`
-  ProfileID/schema checks. Downstream `osracer/main` pins an immutable Base
-  commit rather than following a moving branch.
-- The sanitized machine-readable firmware boundary is
-  `test/fixtures/proto_1_1/firmware_contract.json`; it intentionally excludes
-  firmware source, limits, GPIO, PID, NVS, hardware identity, and calibration
-  data.
-- The historical `v0.1.0` tag resolves to
-  `c7ba366084a56de32cb994048edd1e633090b69e`; it remains a release record, not
-  the active development baseline.
+<p align="center">
+  <img src="docs/assets/readme/osracer-base-hero.jpg" alt="OSRacer Base ROS 2 chassis interface" width="100%">
+</p>
 
-See [CHANGELOG.md](CHANGELOG.md) for the development record.
+<p align="center">
+  <strong>The ROS 2 chassis interface for the OSRacer software platform.</strong>
+</p>
 
-Existing Neo customer deliveries remain on the complete
-`osracer/product/neo` stack. This package does not replace that frozen delivery
-line.
+<p align="center">
+  <a href="https://github.com/osrbot/osracer_base/actions/workflows/ros2-ci.yml"><img src="https://github.com/osrbot/osracer_base/actions/workflows/ros2-ci.yml/badge.svg" alt="ROS 2 CI"></a>
+  <a href="https://docs.ros.org/en/humble/"><img src="https://img.shields.io/badge/ROS%202-Humble-22314E?logo=ros" alt="ROS 2 Humble"></a>
+  <a href="https://docs.ros.org/en/jazzy/"><img src="https://img.shields.io/badge/ROS%202-Jazzy-22314E?logo=ros" alt="ROS 2 Jazzy"></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-2EA44F" alt="MIT License"></a>
+</p>
 
-## Repository Chain and Parameter Ownership
+OSRacer Base provides the reusable ROS 2 connection between an OSRacer vehicle
+controller and the rest of the robot software. It translates the chassis serial
+stream into standard ROS messages and accepts both velocity and Ackermann drive
+commands.
 
-The approved vehicle specification is the physical source of truth. Base does
-not infer new dimensions from fixtures or telemetry:
+## Features
 
-1. `osrcore/main` owns firmware profiles, protocol, effective odometry
-   parameters, control, NVS, and hardware safety behavior.
-2. `osracer_base/main` consumes the sanitized firmware contract and owns the
-   ROS chassis driver plus wheelbase, ROS limits, frames, and battery display
-   mapping.
-3. `osracer/main` pins an exact Base commit and owns bringup and ROS feature
-   integration.
-4. `osracer_lab/main` consumes public ROS interfaces and checked geometry for
-   simulation, policies, and Sim2Real development.
+- Velocity and Ackermann command interfaces
+- Odometry, IMU, raw RC, magnetometer, and battery-state publication
+- Shared timestamps for synchronized motion and inertial data
+- Configurable wheelbase, steering limit, speed limit, frames, and covariances
+- Command timeout with automatic stop
+- Serial reconnection and connection-state diagnostics
+- Firmware-interface validation before motion commands are enabled
+- Stable udev device naming for vehicle deployment
+- ROS 2 Humble and Jazzy continuous integration
 
-Firmware-only values are not copied into this public repository. Geometry
-repeated by downstream simulation is a checked projection, not another source.
+## Latest Release
 
-## Requirements
+**OSRacer Base v0.2.0** provides the current ROS 2 chassis interface with:
 
-- Ubuntu 22.04 + ROS 2 Humble, or Ubuntu 24.04 + ROS 2 Jazzy
-- Python 3
-- Access to the OSRacer USB serial device
-- ROS packages:
-  - `rclpy`
-  - `geometry_msgs`
-  - `ackermann_msgs`
-  - `nav_msgs`
-  - `sensor_msgs`
-  - `std_msgs`
-  - `tf2_ros`
-  - `ros2launch`
-  - `rviz2`
-- System package:
-  - `python3-serial`
+- validated vehicle configuration files for geometry, steering, speed, frames,
+  and battery display;
+- fail-closed firmware-interface checks before motion is enabled;
+- synchronized odometry and inertial publication with shared timestamps;
+- rejection of invalid numeric telemetry before ROS message publication;
+- automatic stop, serial reconnection, and connection-state diagnostics;
+- build and test coverage on ROS 2 Humble and Jazzy.
 
-On Ubuntu, install the OSRacer udev rule and add your user to the `dialout` group:
+See the [v0.2.0 release notes](https://github.com/osrbot/osracer_base/releases/tag/v0.2.0).
+
+## Installation
+
+### As part of OSRacer
+
+The main [OSRacer](https://github.com/osrbot/osracer) workspace imports the
+compatible Base revision through `osracer.repos`. This is the recommended path
+for complete vehicle, SLAM, navigation, and racing applications.
+
+### Standalone workspace
+
+```bash
+mkdir -p ~/osracer_base_ws/src
+cd ~/osracer_base_ws/src
+git clone https://github.com/osrbot/osracer_base.git
+
+source /opt/ros/humble/setup.bash
+rosdep install --from-paths . --ignore-src --rosdistro humble -r -y
+
+cd ~/osracer_base_ws
+colcon build --symlink-install
+source install/setup.bash
+```
+
+Use `/opt/ros/jazzy/setup.bash` and `--rosdistro jazzy` on Ubuntu 24.04 with
+ROS 2 Jazzy.
+
+## Device Setup
+
+Install the udev rule once on each Linux system:
 
 ```bash
 ros2 run osracer_base install_udev_rules
 ```
 
-Unplug and reconnect the vehicle USB cable after installing the rule. Log out and log back in if your group membership changed.
+Reconnect USB after installation. If the current user was newly added to the
+`dialout` group, log out and back in before starting the driver.
 
-## Install Dependencies
-
-Humble:
-
-```bash
-sudo apt update
-sudo apt install ros-humble-ackermann-msgs ros-humble-rviz2 python3-serial udev
-```
-
-Jazzy:
-
-```bash
-sudo apt update
-sudo apt install ros-jazzy-ackermann-msgs ros-jazzy-rviz2 python3-serial udev
-```
-
-## Build
-
-Place this repository in a ROS 2 workspace:
-
-```bash
-mkdir -p ~/osracer_ws/src
-cd ~/osracer_ws/src
-git clone <repo-url> osracer_base
-cd ~/osracer_ws
-colcon build --symlink-install
-source install/setup.bash
-```
-
-## Launch
-
-```bash
-ros2 launch osracer_base chassis_driver.launch.py vehicle_profile:=red
-```
-
-`vehicle_profile` is required and must be `neo`, `red`, or `blue`. Before enabling
-the stream, the driver verifies the firmware `ProjectVer`, `Proto=1.1`, ProfileID,
-profile schema, and motion-ready state. A mismatch closes the connection before
-any motion command is sent.
-
-After startup, the driver logs the verified firmware and profile identity and maintains
-the chassis ROS connection status indicator. If the RC transmitter is in priority
-control mode, the driver warns that ROS motion commands may be ignored until serial
-control is selected.
-
-The default device path is `/dev/osrbot_base`. Use a different `port` value only when needed:
-
-```bash
-ros2 launch osracer_base chassis_driver.launch.py \
-  vehicle_profile:=red port:=/dev/ttyACM0
-```
-
-View odometry and TF in RViz:
-
-```bash
-ros2 launch osracer_base odom_view.launch.py vehicle_profile:=red
-```
-
-Publish a static TF example for SLAM bringup:
-
-```bash
-ros2 launch osracer_base description.launch.py
-```
-
-The example provides static transforms between `base_footprint`, `base_link`, `imu_link`, and `laser_frame`. Override `laser_x`, `laser_y`, `laser_z`, and `laser_yaw` if the LiDAR mounting position is different.
-
-## ROS API
-
-Subscriptions:
-
-```text
-/cmd_vel
-geometry_msgs/msg/Twist
-
-/ackermann_cmd
-ackermann_msgs/msg/AckermannDrive
-```
-
-Publications:
-
-```text
-/odom
-nav_msgs/msg/Odometry
-
-/imu/data
-sensor_msgs/msg/Imu
-
-/rc_data
-std_msgs/msg/Int32MultiArray
-
-/magnetometer_data
-sensor_msgs/msg/MagneticField
-
-/battery_state
-sensor_msgs/msg/BatteryState
-```
-
-Both control topics can be used. The driver applies the most recent command. If no command is received within `cmd_timeout`, the vehicle stops. RC, magnetometer, and battery publication can be disabled independently, and their topic names are configurable.
-
-## Parameters
-
-| Parameter | Default | Description |
-| --- | --- | --- |
-| `port` | `/dev/osrbot_base` | Chassis serial device |
-| `baudrate` | `460800` | Serial baud rate |
-| `vehicle_profile` | required | Selected firmware and chassis profile |
-| `profile_schema` | profile file | Expected firmware profile schema |
-| `wheelbase` | profile file | Vehicle wheelbase in meters |
-| `max_speed` | profile file | ROS-side profile speed ceiling in m/s |
-| `speed_mode` | profile file | Speed mode, supports `high` and `low` |
-| `max_steering_angle` | profile file | Maximum steering angle in radians |
-| `cmd_timeout` | `0.5` | Command timeout in seconds |
-| `reconnect_interval` | `2.0` | Serial reconnect interval in seconds |
-| `firmware_version_timeout` | `0.3` | Startup wait time for reading chassis firmware version, in seconds |
-| `connection_status_enabled` | `true` | Maintain chassis ROS connection status indicator |
-| `connection_refresh_period` | `1.0` | Connection status refresh period in seconds |
-| `odom_frame_id` | `odom` | Odometry frame |
-| `base_frame_id` | `base_footprint` | Vehicle base frame |
-| `imu_frame_id` | `imu_link` | IMU frame |
-| `publish_tf` | `true` | Publish odometry TF |
-| `publish_rc` | `true` | Publish raw RC channel values |
-| `rc_topic` | `rc_data` | Raw RC topic |
-| `publish_mag` | `true` | Publish magnetometer data |
-| `mag_topic` | `magnetometer_data` | Magnetometer topic |
-| `mag_frame_id` | `imu_link` | Magnetometer frame |
-| `imu_orientation_covariance` | `[0.02, 0.02, 0.05]` | IMU orientation covariance diagonal |
-| `imu_angular_velocity_covariance` | `[0.01, 0.01, 0.01]` | IMU angular velocity covariance diagonal |
-| `imu_linear_acceleration_covariance` | `[0.10, 0.10, 0.10]` | IMU linear acceleration covariance diagonal |
-| `odom_twist_covariance` | `[0.02, 0.20, 1.0, 1.0, 1.0, 0.30]` | Odometry twist covariance diagonal |
-| `publish_battery` | `true` | Publish battery state |
-| `battery_topic` | `battery_state` | Battery topic |
-| `battery_voltage_min` | `10.8` | Display-only voltage mapped to 0% |
-| `battery_voltage_max` | `12.6` | Display-only voltage mapped to 100% |
-
-### Vehicle profiles
-
-The installed files under `config/vehicles` contain only ROS-side chassis values:
-
-| Profile | Wheelbase | ROS speed limit | Steering limit |
-| --- | ---: | ---: | ---: |
-| `neo` | 0.285 m | 4.64 m/s | 30 deg |
-| `red` | 0.285 m | 4.64 m/s | 30 deg |
-| `blue` | 0.325 m | 0.8 m/s | 30 deg |
-
-These are the maintained ROS values for the current vehicles and do not require
-another measurement pass. In particular, `4.64 m/s` is the ROS-side profile
-ceiling for Neo/Red, not the private firmware hard limit or a recommended
-first-drive speed. Applications may apply a lower operational limit.
-
-Neo and Red keep separate identities even though their current ROS-side numeric
-values match. Firmware-only values such as GPIO, encoder PPR, gear ratio, wheel
-radius, PID, PWM, NVS, and hard safety limits are not duplicated here.
-
-The battery voltage is measured and sent by the firmware. The two voltage parameters
-above only estimate `BatteryState.percentage`; they do not affect firmware calibration,
-low-voltage protection, alarms, or motion safety.
-
-### Migration from the accepted c329 driver
-
-`osracer_base` intentionally exposes one canonical parameter API. A downstream launch file migrating from `osracer@c329c21` must map the old names explicitly:
-
-| c329 parameter | osracer_base parameter | Conversion |
-| --- | --- | --- |
-| `port_name` | `port` | None |
-| `baud_rate` | `baudrate` | None |
-| `odom_frame` | `odom_frame_id` | None |
-| `base_frame` | `base_frame_id` | None |
-| `imu_frame` | `imu_frame_id` | None |
-| `max_steering_angle_deg` | `max_steering_angle` | Degrees to radians |
-| `cmd_watchdog_timeout_s` | `cmd_timeout` | None |
-| `reconnect_interval_s` | `reconnect_interval` | None |
-| `firmware_version_timeout_s` | `firmware_version_timeout` | None |
-| `link_status_enabled` | `connection_status_enabled` | None |
-| `link_ping_period_s` | `connection_refresh_period` | None |
-| `mag_frame` | `mag_frame_id` | None |
-
-Vehicle geometry and ROS limits now come from the selected profile file. Common defaults
-such as `/dev/osrbot_base`, frame names, watchdog timing, and battery display mapping
-remain configurable ROS parameters.
-
-## Examples
-
-Velocity command:
-
-```bash
-ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist \
-"{linear: {x: 0.3}, angular: {z: 0.0}}"
-```
-
-Ackermann command:
-
-```bash
-ros2 topic pub --once /ackermann_cmd ackermann_msgs/msg/AckermannDrive \
-"{speed: 0.3, steering_angle: 0.1}"
-```
-
-Battery status:
-
-```bash
-ros2 topic echo /battery_state
-```
-
-Device check:
+Check the device without starting the ROS node:
 
 ```bash
 ros2 run osracer_base check_device
 ```
 
-## Status Indicators and Troubleshooting
+## Launch
 
-- On startup, the ROS log should show `Connected to chassis` and the verified firmware,
-  protocol, and profile identity.
-- A protocol, ProfileID, or schema mismatch is intentionally fail-closed. Select the
-  matching `vehicle_profile` instead of overriding firmware identity.
-- Low-voltage alerts are handled by the chassis itself. If battery voltage stays too low, the vehicle uses sound and light indicators and stops motion output.
-- If the ROS node exits or USB connection is lost, the chassis enters its connection-lost indicator state. Restarting the node or reconnecting USB should recover it.
-- If chassis status indicators do not appear, run `ros2 run osracer_base check_device` first, then confirm the startup log prints the firmware version.
+The complete OSRacer workspace supplies the required vehicle configuration. For
+a standalone integration, use the configuration name provided with the vehicle:
+
+```bash
+ros2 launch osracer_base chassis_driver.launch.py \
+  vehicle_profile:=YOUR_CONFIGURATION
+```
+
+The default serial device is `/dev/osrbot_base`. Override it only when required:
+
+```bash
+ros2 launch osracer_base chassis_driver.launch.py \
+  vehicle_profile:=YOUR_CONFIGURATION \
+  port:=/dev/ttyACM0
+```
+
+View odometry and TF in RViz:
+
+```bash
+ros2 launch osracer_base odom_view.launch.py \
+  vehicle_profile:=YOUR_CONFIGURATION
+```
+
+## ROS Interfaces
+
+### Subscriptions
+
+| Topic | Type | Purpose |
+| --- | --- | --- |
+| `/cmd_vel` | `geometry_msgs/msg/Twist` | Linear and angular velocity command |
+| `/ackermann_cmd` | `ackermann_msgs/msg/AckermannDrive` | Speed and steering-angle command |
+
+The most recent command is applied. If neither interface publishes within
+`cmd_timeout`, the driver sends a stop command.
+
+### Publications
+
+| Topic | Type | Purpose |
+| --- | --- | --- |
+| `/odom` | `nav_msgs/msg/Odometry` | Chassis odometry |
+| `/imu/data` | `sensor_msgs/msg/Imu` | Orientation, angular velocity, and acceleration |
+| `/rc_data` | `std_msgs/msg/Int32MultiArray` | Raw receiver channels |
+| `/magnetometer_data` | `sensor_msgs/msg/MagneticField` | Magnetic-field measurement |
+| `/battery_state` | `sensor_msgs/msg/BatteryState` | Battery voltage and display percentage |
+
+RC, magnetometer, battery, and odometry TF publication can be enabled or
+disabled independently.
+
+## Configuration
+
+Vehicle configuration files are installed from `config/vehicles/`. A file
+contains only the ROS values required by the driver, including geometry,
+operating limits, frame conventions, and interface compatibility information.
+
+Frequently used parameters:
+
+| Parameter | Default | Description |
+| --- | --- | --- |
+| `port` | `/dev/osrbot_base` | Chassis serial device |
+| `baudrate` | `460800` | Serial baud rate |
+| `cmd_timeout` | `0.5` | Time without a command before automatic stop |
+| `reconnect_interval` | `2.0` | Serial reconnect interval in seconds |
+| `odom_frame_id` | `odom` | Odometry frame |
+| `base_frame_id` | `base_footprint` | Vehicle base frame |
+| `imu_frame_id` | `imu_link` | IMU frame |
+| `publish_tf` | `true` | Publish odometry TF |
+| `publish_rc` | `true` | Publish receiver channels |
+| `publish_mag` | `true` | Publish magnetic-field data |
+| `publish_battery` | `true` | Publish battery state |
+| `battery_voltage_min` | `10.8` | Voltage displayed as 0% |
+| `battery_voltage_max` | `12.6` | Voltage displayed as 100% |
+
+The battery voltage comes from the vehicle controller. The minimum and maximum
+values only convert voltage to the percentage shown in
+`sensor_msgs/msg/BatteryState`; they do not change voltage measurement or
+vehicle protection behavior.
+
+## Command Examples
+
+Publish a low-speed velocity command:
+
+```bash
+ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist \
+  "{linear: {x: 0.3}, angular: {z: 0.0}}"
+```
+
+Publish an Ackermann command:
+
+```bash
+ros2 topic pub --once /ackermann_cmd ackermann_msgs/msg/AckermannDrive \
+  "{speed: 0.3, steering_angle: 0.1}"
+```
+
+Inspect battery data:
+
+```bash
+ros2 topic echo /battery_state
+```
+
+Perform first motion tests with the driven wheels raised and an emergency stop
+within reach.
+
+## Compatibility
+
+At startup, the driver checks the firmware-reported interface version and the
+selected vehicle configuration before enabling the data stream. A mismatch is
+reported in the ROS log and the connection remains closed. Use the Base revision
+and vehicle configuration supplied with the OSRacer workspace or delivery.
+
+When adapting an older OSRacer launch file, use the current Base parameter
+names:
+
+| Earlier launch name | Current Base parameter |
+| --- | --- |
+| `port_name` | `port` |
+| `baud_rate` | `baudrate` |
+| `odom_frame` | `odom_frame_id` |
+| `base_frame` | `base_frame_id` |
+| `imu_frame` | `imu_frame_id` |
+| `max_steering_angle_deg` | `max_steering_angle` |
+| `cmd_watchdog_timeout_s` | `cmd_timeout` |
+| `reconnect_interval_s` | `reconnect_interval` |
+| `firmware_version_timeout_s` | `firmware_version_timeout` |
+| `link_status_enabled` | `connection_status_enabled` |
+| `link_ping_period_s` | `connection_refresh_period` |
+| `mag_frame` | `mag_frame_id` |
+
+## Troubleshooting
+
+| Symptom | Recommended action |
+| --- | --- |
+| `/dev/osrbot_base` is missing | Reinstall the udev rule, reconnect USB, and verify `dialout` membership. |
+| Permission denied when opening the port | Confirm group membership, then log out and back in. |
+| The port is busy | Stop any other ROS node or utility using the chassis device. |
+| The driver reports an interface mismatch | Restore the Base revision and configuration supplied with the workspace. |
+| Commands do not move the vehicle | Check connection logs, receiver-control priority, command topic, and timeout. |
+| A topic contains no data | Run `check_device`, restart the driver, and inspect the topic rate. |
+
+## Development
+
+Run the package tests:
+
+```bash
+python3 -m pytest -q test
+```
+
+ROS 2 CI builds and tests the package on Humble and Jazzy. See
+[CHANGELOG.md](CHANGELOG.md) for user-visible changes.
+
+## Support
+
+- [GitHub Issues](https://github.com/osrbot/osracer_base/issues)
+- [OSRacer documentation](https://github.com/osrbot/osracer)
+- Technical support and collaboration: [winter@osrbot.com](mailto:winter@osrbot.com)
+
+## Authors
+
+- Zhihao ZHANG
+- Kit So
+- Jintai WANG
+- dajianli
+
+## License
+
+OSRacer Base is released under the [MIT License](LICENSE).
