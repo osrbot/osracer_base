@@ -1,57 +1,39 @@
 # Changelog
 
-This file records the maintained OSRacer Base development line. Historical
-commits and tags remain authoritative for released snapshots.
+This changelog records user-visible changes to OSRacer Base.
 
-## Unreleased — package 0.2.0
+## [Unreleased]
+
+## [0.2.0] - 2026-08-12
+
+### Added
+
+- Explicit vehicle configuration files with schema validation.
+- Firmware-interface identity checks before motion commands are enabled.
+- Machine-readable public serial-interface contract and protocol fixtures.
+- Serial reconnection, connection-state diagnostics, device checks, and udev
+  installation utilities.
+- ROS 2 Humble and Jazzy build and test coverage.
 
 ### Changed
 
-- Rejects complete telemetry frames containing non-finite floating-point values
-  before publishing ROS messages and rate-limits the corresponding diagnostics.
+- Centralizes the ROS values required by the chassis driver: wheelbase,
+  steering limit, speed limit, frame names, and battery display range.
+- Publishes synchronized odometry and inertial data with one shared timestamp.
+- Keeps velocity and Ackermann command interfaces active through one driver
+  implementation and one command-timeout safety path.
 
-- On 2026-08-09, made `main` the default ROS 2 development line and retained
-  `ros1` as a compatibility-only branch.
-- Added explicit `neo`, `red`, and `blue` vehicle profile files and fail-closed
-  firmware ProfileID/schema checks while keeping the public Proto 1.1 framing.
-- Kept only ROS-side wheelbase, profile speed ceiling, steering limit,
-  frames, and battery display mapping in Base; firmware GPIO, encoder, PID,
-  PWM, NVS, and hard safety settings remain outside this repository.
-- Aligned downstream migration with the accepted
-  `osracer@c329c21614f0335d9a8c7a12d2e638a70293052f` behavior and preserved
-  its sanitized protocol fixtures.
-- Added a machine-readable public firmware contract containing only Proto 1.1,
-  command units, and ProfileID/schema. Firmware hard limits remain private;
-  private firmware CI verifies compatibility without publishing their values.
-- Standardized the public maintenance contact as `winter@osrbot.com` while
-  retaining `ament_python` as the package build type.
+### Fixed
 
-### Validation
+- Rejects non-finite synchronized-motion, magnetic-field, and battery values
+  before publishing ROS messages.
+- Rate-limits repeated invalid-telemetry diagnostics.
 
-- Adds a distinct-value Proto 1.1 synchronized-frame regression that verifies
-  every Odom, IMU, and TF field uses the expected mapping and one shared stamp.
-- Covers NaN and infinity rejection for synchronized motion, magnetometer, and
-  battery telemetry.
+## [0.1.0] - 2026-08-07
 
-- GitHub Actions builds and tests `main` on ROS 2 Humble / Ubuntu 22.04 and
-  ROS 2 Jazzy / Ubuntu 24.04.
-- `osracer/main` pins an immutable `osracer_base` commit for reproducible
-  integration rather than following a moving branch.
+- Introduced the standalone ROS 2 chassis package, launch files, udev rule,
+  velocity and Ackermann command interfaces, odometry and sensor publication,
+  and the initial Humble/Jazzy CI workflow.
 
-### Documentation
-
-- Updated the maintenance baseline, clarified the historical c329 fixture
-  anchor, and documented that `0.2.0` has no tag or release yet.
-- Synchronized the documented `main` and maintenance-only `ros1` revisions with
-  the current remote branches, and distinguished ROS profile ceilings from
-  firmware hard limits and application-level operating clamps.
-- Documented the one-way Core to Base to OSRacer to Lab dependency chain and
-  clarified that Base stores the ROS projection of the approved vehicle
-  specification rather than defining an independent physical baseline.
-
-## 0.1.0 — 2026-08-07
-
-- Established the first tagged ROS 2 Base package at
-  `c7ba366084a56de32cb994048edd1e633090b69e`.
-- Added the minimal chassis driver, udev binding, launch files, ROS topics, and
-  the initial Humble/Jazzy CI baseline.
+[0.2.0]: https://github.com/osrbot/osracer_base/releases/tag/v0.2.0
+[0.1.0]: https://github.com/osrbot/osracer_base/releases/tag/v0.1.0
