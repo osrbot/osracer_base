@@ -1,8 +1,0 @@
-/**:
-  ros__parameters:
-    vehicle_profile: neo
-    profile_schema: 1
-    wheelbase: 0.285
-    max_speed: 4.64
-    speed_mode: high
-    max_steering_angle: 0.5235987756

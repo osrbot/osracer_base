@@ -5,6 +5,7 @@ import signal
 import termios
 import threading
 import time
+from dataclasses import dataclass
 
 import rclpy
 from ackermann_msgs.msg import AckermannDrive
@@ -20,11 +21,26 @@ from tf2_ros import TransformBroadcaster
 import serial
 
 
-DEFAULT_MAX_SPEED = 0.8
-LOW_SPEED_RATIO = 0.5
 SUPPORTED_PROTOCOL = '1.1'
+VEHICLE_CAPABILITY_CONTRACT = 1
+MAX_WHEELBASE_MM = 9_999
+MAX_SPEED_MMPS = 20_000
+MAX_STEERING_MDEG = 90_000
+MAX_BATTERY_MV = 60_000
 SERIAL_ERRORS = (serial.SerialException, OSError, ValueError, TypeError, termios.error)
 NONFINITE_WARNING_INTERVAL_S = 5.0
+
+
+@dataclass(frozen=True)
+class VehicleCapabilities:
+    profile: str
+    schema: int
+    wheelbase_m: float
+    forward_max_mps: float
+    reverse_max_mps: float
+    steering_max_rad: float
+    battery_min_v: float
+    battery_max_v: float
 
 
 class ChassisDriver(Node):
@@ -33,12 +49,6 @@ class ChassisDriver(Node):
 
         self.declare_parameter('port', '/dev/osrbot_base')
         self.declare_parameter('baudrate', 460800)
-        self.declare_parameter('vehicle_profile', '')
-        self.declare_parameter('profile_schema', 1)
-        self.declare_parameter('wheelbase', 0.325)
-        self.declare_parameter('max_speed', DEFAULT_MAX_SPEED)
-        self.declare_parameter('speed_mode', 'high')
-        self.declare_parameter('max_steering_angle', math.radians(30.0))
         self.declare_parameter('cmd_timeout', 0.5)
         self.declare_parameter('reconnect_interval', 2.0)
         self.declare_parameter('firmware_version_timeout', 0.3)
@@ -59,23 +69,9 @@ class ChassisDriver(Node):
         self.declare_parameter('odom_twist_covariance', [0.02, 0.20, 1.0, 1.0, 1.0, 0.30])
         self.declare_parameter('publish_battery', True)
         self.declare_parameter('battery_topic', 'battery_state')
-        self.declare_parameter('battery_voltage_min', 10.8)
-        self.declare_parameter('battery_voltage_max', 12.6)
 
         self.port = self.get_parameter('port').value
         self.baudrate = int(self.get_parameter('baudrate').value)
-        self.vehicle_profile = str(self.get_parameter('vehicle_profile').value).strip().lower()
-        self.profile_schema = int(self.get_parameter('profile_schema').value)
-        if not re.fullmatch(r'[a-z0-9_-]+', self.vehicle_profile):
-            raise ValueError('vehicle_profile must be selected explicitly')
-        if self.profile_schema < 1:
-            raise ValueError('profile_schema must be positive')
-        self.wheelbase = float(self.get_parameter('wheelbase').value)
-        self.max_speed = self.resolve_max_speed(
-            self.get_parameter('max_speed').value,
-            self.get_parameter('speed_mode').value,
-        )
-        self.max_steering_angle = abs(float(self.get_parameter('max_steering_angle').value))
         self.cmd_timeout = float(self.get_parameter('cmd_timeout').value)
         self.reconnect_interval = float(self.get_parameter('reconnect_interval').value)
         self.firmware_version_timeout = float(self.get_parameter('firmware_version_timeout').value)
@@ -104,8 +100,6 @@ class ChassisDriver(Node):
         )
         self.publish_battery_enabled = self.as_bool(self.get_parameter('publish_battery').value)
         self.battery_topic = self.get_parameter('battery_topic').value
-        self.battery_voltage_min = float(self.get_parameter('battery_voltage_min').value)
-        self.battery_voltage_max = float(self.get_parameter('battery_voltage_max').value)
 
         qos_fast = QoSProfile(depth=1)
         qos_normal = QoSProfile(depth=5)
@@ -135,6 +129,9 @@ class ChassisDriver(Node):
         self.serial_conn = None
         self.serial_lock = threading.Lock()
         self.reader_thread = None
+        self.capability_ready = False
+        self.vehicle_capabilities = None
+        self.capability_conn = None
         self.shutdown_event = threading.Event()
         self.last_cmd_time = self.get_clock().now()
         self.remote_control_active = None
@@ -144,7 +141,6 @@ class ChassisDriver(Node):
         self.create_timer(self.reconnect_interval, self.ensure_connected)
         self.create_timer(0.1, self.watchdog_check)
         self.create_timer(max(0.2, self.connection_refresh_period), self.refresh_connection_status)
-        self.get_logger().info(f"ROS speed limit: {self.max_speed:.3f} m/s")
         self.ensure_connected()
 
     def ensure_connected(self):
@@ -156,6 +152,10 @@ class ChassisDriver(Node):
         if connected:
             if self.port.startswith('/') and not os.path.exists(self.port):
                 self.get_logger().warning(f"Serial device disconnected: {self.port}")
+                self.close_serial(conn)
+                return
+            active_conn, _ = self.active_capability_binding()
+            if active_conn is not conn:
                 self.close_serial(conn)
                 return
             self.start_reader()
@@ -174,21 +174,28 @@ class ChassisDriver(Node):
             return
 
         with self.serial_lock:
+            self._clear_vehicle_capabilities_locked()
             self.serial_conn = conn
-        if not self.configure_device():
-            self.close_serial()
+        if not self.configure_device(conn):
+            if conn.is_open:
+                self.close_serial(conn)
             return
         self.start_reader()
         self.get_logger().info(f"Connected to chassis on {self.port}")
 
-    def configure_device(self):
-        if not self.verify_firmware_identity():
+    def configure_device(self, conn):
+        capabilities = self.verify_firmware_identity(conn)
+        if capabilities is None:
             return False
-        if not self.write_raw(self._device_mode_command()):
+        if not self.write_raw(self._device_mode_command(), expected_conn=conn):
             return False
-        if not self.write_raw(self._state_request_command()):
+        if not self.write_raw(self._state_request_command(), expected_conn=conn):
             return False
-        self.send_connection_status('up')
+        if not self.bind_vehicle_capabilities(conn, capabilities):
+            return False
+        if not self.send_connection_status('up', expected_conn=conn):
+            return False
+        self.get_logger().info('Vehicle capability contract accepted')
         return True
 
     @staticmethod
@@ -211,11 +218,15 @@ class ChassisDriver(Node):
     def _profile_command():
         return 'profile get\n'
 
-    def verify_firmware_identity(self):
+    @staticmethod
+    def _vehicle_command():
+        return 'vehicle get\n'
+
+    def verify_firmware_identity(self, expected_conn):
         with self.serial_lock:
             conn = self.serial_conn
-            if conn is None or not conn.is_open:
-                return False
+            if conn is not expected_conn or not conn.is_open:
+                return None
             try:
                 conn.reset_input_buffer()
                 conn.write(self._quiet_command().encode('utf-8'))
@@ -226,51 +237,57 @@ class ChassisDriver(Node):
                 conn.flush()
             except SERIAL_ERRORS as exc:
                 self.get_logger().warning(f"Could not query chassis firmware version: {exc}")
-                return False
+                return None
 
-        version = self.read_identity_response(self.parse_firmware_version)
+        version = self.read_identity_response(self.parse_firmware_version, expected_conn)
         if version is None:
             self.get_logger().warning('Chassis firmware identity unavailable')
-            return False
+            return None
         project_ver, protocol = version
         if protocol != SUPPORTED_PROTOCOL:
             self.get_logger().warning(
                 f"Unsupported chassis protocol {protocol}; expected {SUPPORTED_PROTOCOL}"
             )
-            return False
+            return None
 
-        if not self.write_raw(self._profile_command()):
-            return False
-        profile = self.read_identity_response(self.parse_profile_status)
+        if not self.write_raw(self._profile_command(), expected_conn=expected_conn):
+            return None
+        profile = self.read_identity_response(self.parse_profile_status, expected_conn)
         if profile is None:
             self.get_logger().warning('Chassis profile identity unavailable')
-            return False
-        if profile['id'] != self.vehicle_profile or profile['schema'] != self.profile_schema:
-            self.get_logger().warning(
-                'Chassis profile mismatch: '
-                f"device={profile['id']}/schema-{profile['schema']} "
-                f"selected={self.vehicle_profile}/schema-{self.profile_schema}"
-            )
-            return False
+            return None
         if profile['state'] != 'READY' or not profile['motion']:
             self.get_logger().warning(
                 'Chassis profile is not motion-ready: '
                 f"State={profile['state']}, Motion={'Yes' if profile['motion'] else 'No'}"
             )
-            return False
+            return None
+
+        if not self.write_raw(self._vehicle_command(), expected_conn=expected_conn):
+            return None
+        capabilities = self.read_identity_response(
+            lambda line: self.parse_vehicle_capabilities(
+                line,
+                expected_profile=profile['id'],
+                expected_schema=profile['schema'],
+            ),
+            expected_conn,
+        )
+        if capabilities is None:
+            self.get_logger().warning('Chassis vehicle capability contract unavailable')
+            return None
 
         self.get_logger().info(
-            f"Chassis firmware ProjectVer: {project_ver}, Proto: {protocol}, "
-            f"Profile: {profile['id']}/schema-{profile['schema']}, State: {profile['state']}"
+            f"Chassis firmware ProjectVer: {project_ver}, Proto: {protocol}"
         )
-        return True
+        return capabilities
 
-    def read_identity_response(self, parser):
+    def read_identity_response(self, parser, expected_conn):
         deadline = time.monotonic() + max(0.1, self.firmware_version_timeout)
         while time.monotonic() < deadline:
             with self.serial_lock:
                 conn = self.serial_conn
-                if conn is None or not conn.is_open:
+                if conn is not expected_conn or not conn.is_open:
                     return None
                 try:
                     line = conn.readline().decode('utf-8', errors='ignore').strip()
@@ -321,6 +338,109 @@ class ChassisDriver(Node):
             'writes': match.group(5) == 'Yes',
         }
 
+    @staticmethod
+    def parse_vehicle_capabilities(line, expected_profile, expected_schema):
+        match = re.fullmatch(
+            r'VEHICLE: Contract=([0-9]+), Profile=([a-z0-9_-]+), Schema=([0-9]+), '
+            r'WheelbaseMm=([0-9]+), ForwardMaxMmps=([0-9]+), '
+            r'ReverseMaxMmps=([0-9]+), SteeringMaxMdeg=([0-9]+), '
+            r'BatteryMinMv=([0-9]+), BatteryMaxMv=([0-9]+)',
+            line,
+        )
+        if not match:
+            return None
+
+        (
+            contract,
+            profile,
+            schema,
+            wheelbase_mm,
+            forward_max_mmps,
+            reverse_max_mmps,
+            steering_max_mdeg,
+            battery_min_mv,
+            battery_max_mv,
+        ) = match.groups()
+        values = tuple(
+            int(value)
+            for value in (
+                contract,
+                schema,
+                wheelbase_mm,
+                forward_max_mmps,
+                reverse_max_mmps,
+                steering_max_mdeg,
+                battery_min_mv,
+                battery_max_mv,
+            )
+        )
+        (
+            contract,
+            schema,
+            wheelbase_mm,
+            forward_max_mmps,
+            reverse_max_mmps,
+            steering_max_mdeg,
+            battery_min_mv,
+            battery_max_mv,
+        ) = values
+
+        if contract != VEHICLE_CAPABILITY_CONTRACT:
+            return None
+        if schema < 1:
+            return None
+        if profile != expected_profile or schema != expected_schema:
+            return None
+        if not 0 < wheelbase_mm <= MAX_WHEELBASE_MM:
+            return None
+        if not 0 < forward_max_mmps <= MAX_SPEED_MMPS:
+            return None
+        if not 0 < reverse_max_mmps <= MAX_SPEED_MMPS:
+            return None
+        if not 0 < steering_max_mdeg <= MAX_STEERING_MDEG:
+            return None
+        if battery_min_mv >= battery_max_mv or battery_max_mv > MAX_BATTERY_MV:
+            return None
+
+        return VehicleCapabilities(
+            profile=profile,
+            schema=schema,
+            wheelbase_m=wheelbase_mm / 1000.0,
+            forward_max_mps=forward_max_mmps / 1000.0,
+            reverse_max_mps=reverse_max_mmps / 1000.0,
+            steering_max_rad=math.radians(steering_max_mdeg / 1000.0),
+            battery_min_v=battery_min_mv / 1000.0,
+            battery_max_v=battery_max_mv / 1000.0,
+        )
+
+    def _clear_vehicle_capabilities_locked(self):
+        self.capability_ready = False
+        self.vehicle_capabilities = None
+        self.capability_conn = None
+
+    def bind_vehicle_capabilities(self, expected_conn, capabilities):
+        with self.serial_lock:
+            if self.serial_conn is not expected_conn or not expected_conn.is_open:
+                return False
+            self.vehicle_capabilities = capabilities
+            self.capability_conn = expected_conn
+            self.capability_ready = True
+        return True
+
+    def active_capability_binding(self):
+        with self.serial_lock:
+            conn = self.serial_conn
+            capabilities = self.vehicle_capabilities
+            if (
+                not self.capability_ready
+                or capabilities is None
+                or self.capability_conn is not conn
+                or conn is None
+                or not conn.is_open
+            ):
+                return None, None
+            return conn, capabilities
+
     def start_reader(self):
         if self.shutdown_event.is_set():
             return
@@ -336,6 +456,7 @@ class ChassisDriver(Node):
             else:
                 conn = self.serial_conn
                 self.serial_conn = None
+                self._clear_vehicle_capabilities_locked()
         if conn:
             try:
                 if conn.is_open:
@@ -344,18 +465,20 @@ class ChassisDriver(Node):
             except Exception:
                 pass
 
-    def send_connection_status(self, state):
+    def send_connection_status(self, state, expected_conn=None):
         if not self.connection_status_enabled:
             return True
-        return self.write_raw(self._connection_status_command(state))
+        return self.write_raw(
+            self._connection_status_command(state),
+            expected_conn=expected_conn,
+        )
 
     def refresh_connection_status(self):
         if self.shutdown_event.is_set():
             return
-        with self.serial_lock:
-            connected = self.serial_conn is not None and self.serial_conn.is_open
-        if connected:
-            self.send_connection_status('ping')
+        conn, _ = self.active_capability_binding()
+        if conn is not None:
+            self.send_connection_status('ping', expected_conn=conn)
 
     def write_connection_down(self, conn):
         if not self.connection_status_enabled:
@@ -379,11 +502,15 @@ class ChassisDriver(Node):
     def _ignored_response_prefixes():
         return ('FW', 'DIAG', 'LINK', 'OK', 'ERROR')
 
-    def write_raw(self, command):
+    def write_raw(self, command, expected_conn=None):
         failed_conn = None
         with self.serial_lock:
             conn = self.serial_conn
-            if conn is None or not conn.is_open:
+            if (
+                conn is None
+                or not conn.is_open
+                or (expected_conn is not None and conn is not expected_conn)
+            ):
                 return False
             try:
                 conn.write(command.encode('utf-8'))
@@ -393,6 +520,7 @@ class ChassisDriver(Node):
                 self.get_logger().warning(f"Serial write failed: {exc}")
                 if self.serial_conn is conn:
                     self.serial_conn = None
+                    self._clear_vehicle_capabilities_locked()
                 failed_conn = conn
         if failed_conn:
             try:
@@ -402,20 +530,53 @@ class ChassisDriver(Node):
         return False
 
     def cmd_vel_callback(self, msg):
-        speed = self.clamp(msg.linear.x, -self.max_speed, self.max_speed)
+        binding = self.active_capability_binding()
+        conn, capabilities = binding
+        if conn is None:
+            return
+        speed = self.clamp(
+            msg.linear.x,
+            -capabilities.reverse_max_mps,
+            capabilities.forward_max_mps,
+        )
         if abs(speed) < 0.01:
-            steering = 0.0 if msg.angular.z == 0.0 else math.copysign(self.max_steering_angle, msg.angular.z)
+            steering = (
+                0.0
+                if msg.angular.z == 0.0
+                else math.copysign(capabilities.steering_max_rad, msg.angular.z)
+            )
         else:
-            steering = math.atan(self.wheelbase * msg.angular.z / speed)
-        self.send_drive_command(speed, steering)
+            steering = math.atan(capabilities.wheelbase_m * msg.angular.z / speed)
+        self.send_drive_command(speed, steering, expected_binding=binding)
 
     def ackermann_cmd_callback(self, msg):
-        self.send_drive_command(msg.speed, msg.steering_angle)
+        binding = self.active_capability_binding()
+        if binding[0] is None:
+            return
+        self.send_drive_command(msg.speed, msg.steering_angle, expected_binding=binding)
 
-    def send_drive_command(self, speed, steering):
-        speed = self.clamp(float(speed), -self.max_speed, self.max_speed)
-        steering = self.clamp(float(steering), -self.max_steering_angle, self.max_steering_angle)
-        if self.write_raw(f"v {speed:.3f} {math.degrees(steering):.2f}\n"):
+    def send_drive_command(self, speed, steering, expected_binding=None):
+        conn, capabilities = self.active_capability_binding()
+        if conn is None:
+            return
+        if expected_binding is not None and (
+            conn is not expected_binding[0] or capabilities is not expected_binding[1]
+        ):
+            return
+        speed = self.clamp(
+            float(speed),
+            -capabilities.reverse_max_mps,
+            capabilities.forward_max_mps,
+        )
+        steering = self.clamp(
+            float(steering),
+            -capabilities.steering_max_rad,
+            capabilities.steering_max_rad,
+        )
+        if self.write_raw(
+            f"v {speed:.3f} {math.degrees(steering):.2f}\n",
+            expected_conn=conn,
+        ):
             self.last_cmd_time = self.get_clock().now()
 
     def read_loop(self):
@@ -570,6 +731,9 @@ class ChassisDriver(Node):
     def publish_battery(self, voltage):
         if not self.publish_battery_enabled or self.battery_pub is None:
             return
+        _, capabilities = self.active_capability_binding()
+        if capabilities is None:
+            return
         values = self.parse_finite_telemetry('b', [voltage])
         if values is None:
             return
@@ -577,9 +741,10 @@ class ChassisDriver(Node):
         msg = BatteryState()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.voltage = voltage
-        if self.battery_voltage_max > self.battery_voltage_min:
-            pct = (voltage - self.battery_voltage_min) / (self.battery_voltage_max - self.battery_voltage_min)
-            msg.percentage = self.clamp(pct, 0.0, 1.0)
+        pct = (voltage - capabilities.battery_min_v) / (
+            capabilities.battery_max_v - capabilities.battery_min_v
+        )
+        msg.percentage = self.clamp(pct, 0.0, 1.0)
         self.battery_pub.publish(msg)
 
     def parse_finite_telemetry(self, command, raw_values):
@@ -620,22 +785,16 @@ class ChassisDriver(Node):
     def watchdog_check(self):
         if self.shutdown_event.is_set():
             return
+        conn, _ = self.active_capability_binding()
+        if conn is None:
+            return
         elapsed = (self.get_clock().now() - self.last_cmd_time).nanoseconds / 1e9
         if elapsed > self.cmd_timeout:
-            self.write_raw("v 0.00 0.00\n")
+            self.write_raw("v 0.00 0.00\n", expected_conn=conn)
 
     @staticmethod
     def clamp(value, lower, upper):
         return max(lower, min(upper, value))
-
-    def resolve_max_speed(self, max_speed, speed_mode):
-        speed = abs(float(max_speed))
-        mode = str(speed_mode).strip().lower()
-        if mode == 'low':
-            return speed * LOW_SPEED_RATIO
-        if mode != 'high':
-            self.get_logger().warning(f"Unknown speed_mode '{speed_mode}', using high")
-        return speed
 
     @staticmethod
     def as_bool(value):
