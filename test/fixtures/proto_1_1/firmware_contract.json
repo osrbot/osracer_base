@@ -6,15 +6,27 @@
     "linear_velocity_unit": "m/s",
     "steering_angle_unit": "deg"
   },
-  "profiles": {
-    "blue": {
-      "profile_schema": 1
-    },
-    "neo": {
-      "profile_schema": 1
-    },
-    "red": {
-      "profile_schema": 1
+  "vehicle_capability": {
+    "request": "vehicle get\n",
+    "contract": 1,
+    "response_fields": [
+      "Contract",
+      "Profile",
+      "Schema",
+      "WheelbaseMm",
+      "ForwardMaxMmps",
+      "ReverseMaxMmps",
+      "SteeringMaxMdeg",
+      "BatteryMinMv",
+      "BatteryMaxMv"
+    ],
+    "units": {
+      "WheelbaseMm": "mm",
+      "ForwardMaxMmps": "mm/s",
+      "ReverseMaxMmps": "mm/s",
+      "SteeringMaxMdeg": "millidegree",
+      "BatteryMinMv": "mV",
+      "BatteryMaxMv": "mV"
     }
   }
 }

@@ -1,8 +1,28 @@
 # Changelog
 
+<!-- markdownlint-configure-file {"MD024": {"siblings_only": true}} -->
+
 This changelog records user-visible changes to OSRacer Base.
 
 ## [Unreleased]
+
+## [0.3.0] - 2026-08-15
+
+### Added
+
+- Reads and strictly validates the controller's vehicle capability contract on
+  every serial connection before enabling motion.
+
+### Changed
+
+- Uses controller-reported wheelbase, separate forward and reverse speed
+  limits, steering limit, and battery display range for the current connection.
+- Revalidates firmware, profile, and vehicle identity after every reconnect.
+
+### Removed
+
+- Removes duplicate ROS vehicle-physics configuration files and the associated
+  profile, geometry, speed, steering, and battery-range launch parameters.
 
 ## [0.2.0] - 2026-08-12
 
@@ -35,5 +55,6 @@ This changelog records user-visible changes to OSRacer Base.
   velocity and Ackermann command interfaces, odometry and sensor publication,
   and the initial Humble/Jazzy CI workflow.
 
+[0.3.0]: https://github.com/osrbot/osracer_base/releases/tag/v0.3.0
 [0.2.0]: https://github.com/osrbot/osracer_base/releases/tag/v0.2.0
 [0.1.0]: https://github.com/osrbot/osracer_base/releases/tag/v0.1.0

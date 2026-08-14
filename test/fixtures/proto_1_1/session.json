@@ -2,10 +2,6 @@
   "schema_version": 1,
   "protocol": "1.1",
   "evidence_scope": "sanitized verified host-visible behavior",
-  "behavior_baseline": {
-    "repository": "osrbot/osracer",
-    "commit": "c329c21614f0335d9a8c7a12d2e638a70293052f"
-  },
   "sanitization": {
     "private_source_copied": false,
     "identifiers_removed": true,
@@ -14,11 +10,13 @@
   },
   "startup": {
     "firmware_version_response": "FW_VERSION: ProjectVer=PUBLIC_TEST_FIXTURE, Proto=1.1",
-    "firmware_profile_response": "PROFILE: ID=red, Schema=1, State=READY, Motion=Yes, Writes=Yes",
+    "firmware_profile_response": "PROFILE: ID=fixture_alpha, Schema=7, State=READY, Motion=Yes, Writes=Yes",
+    "vehicle_capability_response": "VEHICLE: Contract=1, Profile=fixture_alpha, Schema=7, WheelbaseMm=1375, ForwardMaxMmps=4321, ReverseMaxMmps=1234, SteeringMaxMdeg=27123, BatteryMinMv=11111, BatteryMaxMv=14999",
     "expected_host_commands": [
       "stream off\n",
       "fw version\n",
       "profile get\n",
+      "vehicle get\n",
       "stream sync\n",
       "s\n",
       "link up ros\n"

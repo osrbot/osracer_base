@@ -1,26 +1,12 @@
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
-from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
-    default_profile_file = PathJoinSubstitution([
-        FindPackageShare('osracer_base'),
-        'config',
-        'vehicles',
-        PythonExpression(["'", LaunchConfiguration('vehicle_profile'), ".yaml'"]),
-    ])
-
     args = [
-        DeclareLaunchArgument(
-            'vehicle_profile',
-            description='Required chassis profile: neo, red, or blue',
-            choices=['neo', 'red', 'blue'],
-        ),
-        DeclareLaunchArgument('profile_file', default_value=default_profile_file),
         DeclareLaunchArgument('port', default_value='/dev/osrbot_base'),
         DeclareLaunchArgument('baudrate', default_value='460800'),
         DeclareLaunchArgument('cmd_timeout', default_value='0.5'),
@@ -43,8 +29,6 @@ def generate_launch_description():
         DeclareLaunchArgument('odom_twist_covariance', default_value='[0.02, 0.20, 1.0, 1.0, 1.0, 0.30]'),
         DeclareLaunchArgument('publish_battery', default_value='true'),
         DeclareLaunchArgument('battery_topic', default_value='battery_state'),
-        DeclareLaunchArgument('battery_voltage_min', default_value='10.8'),
-        DeclareLaunchArgument('battery_voltage_max', default_value='12.6'),
     ]
 
     driver = Node(
@@ -52,7 +36,7 @@ def generate_launch_description():
         executable='chassis_driver',
         name='osracer_base',
         output='screen',
-        parameters=[LaunchConfiguration('profile_file'), {
+        parameters=[{
             'port': LaunchConfiguration('port'),
             'baudrate': LaunchConfiguration('baudrate'),
             'cmd_timeout': LaunchConfiguration('cmd_timeout'),
@@ -83,8 +67,6 @@ def generate_launch_description():
             ),
             'publish_battery': LaunchConfiguration('publish_battery'),
             'battery_topic': LaunchConfiguration('battery_topic'),
-            'battery_voltage_min': LaunchConfiguration('battery_voltage_min'),
-            'battery_voltage_max': LaunchConfiguration('battery_voltage_max'),
         }],
     )
 

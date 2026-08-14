@@ -31,7 +31,8 @@ OSRacer Base 为 OSRacer 车辆控制器与上层机器人软件提供可复用�
 - 速度与 Ackermann 控制接口
 - 里程计、IMU、遥控器原始通道、磁力计和电池状态发布
 - 运动和惯性数据使用统一时间戳
-- 可配置轴距、转角、速度限制、坐标系和协方差
+- 自动适配轴距、前进/倒车速度限制、最大转角和电池显示范围
+- 可配置 ROS 坐标系、发布选项、话题和协方差
 - 命令超时自动停车
 - 串口自动重连与连接状态诊断
 - 启用运动命令前验证固件接口
@@ -40,16 +41,16 @@ OSRacer Base 为 OSRacer 车辆控制器与上层机器人软件提供可复用�
 
 ## 最新版本
 
-**OSRacer Base v0.2.0** 是当前 ROS 2 底盘接口版本，主要包括：
+**OSRacer Base v0.3.0** 是当前 ROS 2 底盘接口版本，主要包括：
 
-- 对车辆几何、转角、速度、frame 和电池显示配置进行验证；
+- 每次连接时读取并严格校验控制器报告的车辆能力；
 - 在允许运动前执行故障关闭式固件接口检查；
 - 使用统一时间戳发布同步里程计和惯性数据；
 - 在发布 ROS 消息前拒绝非法数值遥测；
 - 提供自动停止、串口重连和连接状态诊断；
 - 覆盖 ROS 2 Humble 与 Jazzy 的构建和测试。
 
-详见 [v0.2.0 版本说明](https://github.com/osrbot/osracer_base/releases/tag/v0.2.0)。
+详见 [v0.3.0 版本说明](https://github.com/osrbot/osracer_base/releases/tag/v0.3.0)。
 
 ## 安装
 
@@ -95,27 +96,23 @@ ros2 run osracer_base check_device
 
 ## 启动
 
-完整 OSRacer 工作空间会提供所需的车辆配置。独立集成时，使用车辆交付时提供的
-配置名称：
+直接启动驱动。驱动会在串口握手期间自动读取兼容控制器报告的车辆几何与运行限制：
 
 ```bash
-ros2 launch osracer_base chassis_driver.launch.py \
-  vehicle_profile:=YOUR_CONFIGURATION
+ros2 launch osracer_base chassis_driver.launch.py
 ```
 
 默认串口设备为 `/dev/osrbot_base`。仅在确有需要时修改：
 
 ```bash
 ros2 launch osracer_base chassis_driver.launch.py \
-  vehicle_profile:=YOUR_CONFIGURATION \
   port:=/dev/ttyACM0
 ```
 
 在 RViz 中查看里程计和 TF：
 
 ```bash
-ros2 launch osracer_base odom_view.launch.py \
-  vehicle_profile:=YOUR_CONFIGURATION
+ros2 launch osracer_base odom_view.launch.py
 ```
 
 ## ROS 接口
@@ -144,8 +141,13 @@ ros2 launch osracer_base odom_view.launch.py \
 
 ## 配置
 
-车辆配置文件安装在 `config/vehicles/`。文件只包含驱动运行所需的 ROS 参数，
-包括几何参数、运行限制、坐标系约定和接口兼容信息。
+每次建立串口连接时，驱动都会依次验证 `fw version`、`profile get` 和
+`vehicle get` 响应，全部通过后才允许运动。通过验证的能力合同提供轴距、独立的
+前进与倒车速度限制、最大转角和电池显示范围。这些值只保存在当前连接的内存中，
+重连后会重新读取。
+
+ROS 坐标系、TF 发布、传感器发布、话题、协方差和串口时序仍通过 launch 参数
+配置。控制器报告的车辆能力不作为 ROS 参数公开。
 
 常用参数：
 
@@ -162,11 +164,12 @@ ros2 launch osracer_base odom_view.launch.py \
 | `publish_rc` | `true` | 发布遥控器通道 |
 | `publish_mag` | `true` | 发布磁场数据 |
 | `publish_battery` | `true` | 发布电池状态 |
-| `battery_voltage_min` | `10.8` | 显示为 0% 的电压 |
-| `battery_voltage_max` | `12.6` | 显示为 100% 的电压 |
 
-电池电压由车辆控制器测量。最小和最大值只负责把电压换算为
+电池电压和显示范围由控制器提供。该范围只负责把电压换算为
 `sensor_msgs/msg/BatteryState` 中显示的百分比，不会改变电压测量和车辆保护行为。
+
+公开握手与校验规则见
+[车辆能力协议](docs/vehicle_capability_contract_zh.md)。
 
 ## 控制示例
 
@@ -194,9 +197,10 @@ ros2 topic echo /battery_state
 
 ## 兼容性
 
-启动时，驱动会在启用数据流之前检查固件报告的接口版本和选定的车辆配置。
-不匹配时，ROS 日志会显示原因，连接保持关闭。请使用 OSRacer 工作空间或车辆
-交付时提供的 Base 版本和车辆配置。
+启动和每次重连时，驱动都会在启用数据流之前检查固件接口、可运动的 profile
+状态和车辆能力合同。控制器必须支持 Proto 1.1 与 `vehicle get` Contract 1。
+不支持该命令的旧固件会保持断开且不会收到运动命令；ROS 节点继续运行，以便
+连接兼容控制器或稍后重连。
 
 适配较早的 OSRacer launch 文件时，应使用当前 Base 参数名称：
 
@@ -207,7 +211,6 @@ ros2 topic echo /battery_state
 | `odom_frame` | `odom_frame_id` |
 | `base_frame` | `base_frame_id` |
 | `imu_frame` | `imu_frame_id` |
-| `max_steering_angle_deg` | `max_steering_angle` |
 | `cmd_watchdog_timeout_s` | `cmd_timeout` |
 | `reconnect_interval_s` | `reconnect_interval` |
 | `firmware_version_timeout_s` | `firmware_version_timeout` |
@@ -222,7 +225,7 @@ ros2 topic echo /battery_state
 | 找不到 `/dev/osrbot_base` | 重新安装 udev 规则、连接 USB，并确认当前用户属于 `dialout` 用户组。 |
 | 打开串口时权限不足 | 确认用户组设置，然后注销并重新登录。 |
 | 串口被占用 | 停止正在使用底盘设备的其他 ROS 节点或工具。 |
-| 驱动报告接口不匹配 | 恢复工作空间提供的 Base 版本和车辆配置。 |
+| 驱动报告接口不匹配 | 安装支持 Proto 1.1 和车辆能力 Contract 1 响应的控制器固件。 |
 | 命令无法驱动车辆 | 检查连接日志、遥控器优先级、命令话题与超时设置。 |
 | 话题没有数据 | 运行 `check_device`，重启驱动并检查话题频率。 |
 

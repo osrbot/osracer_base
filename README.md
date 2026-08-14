@@ -32,7 +32,8 @@ commands.
 - Velocity and Ackermann command interfaces
 - Odometry, IMU, raw RC, magnetometer, and battery-state publication
 - Shared timestamps for synchronized motion and inertial data
-- Configurable wheelbase, steering limit, speed limit, frames, and covariances
+- Automatic wheelbase, directional speed-limit, steering-limit, and battery-range adaptation
+- Configurable ROS frames, publication options, topics, and covariances
 - Command timeout with automatic stop
 - Serial reconnection and connection-state diagnostics
 - Firmware-interface validation before motion commands are enabled
@@ -41,17 +42,16 @@ commands.
 
 ## Latest Release
 
-**OSRacer Base v0.2.0** provides the current ROS 2 chassis interface with:
+**OSRacer Base v0.3.0** provides the current ROS 2 chassis interface with:
 
-- validated vehicle configuration files for geometry, steering, speed, frames,
-  and battery display;
+- controller-reported vehicle capabilities validated on every connection;
 - fail-closed firmware-interface checks before motion is enabled;
 - synchronized odometry and inertial publication with shared timestamps;
 - rejection of invalid numeric telemetry before ROS message publication;
 - automatic stop, serial reconnection, and connection-state diagnostics;
 - build and test coverage on ROS 2 Humble and Jazzy.
 
-See the [v0.2.0 release notes](https://github.com/osrbot/osracer_base/releases/tag/v0.2.0).
+See the [v0.3.0 release notes](https://github.com/osrbot/osracer_base/releases/tag/v0.3.0).
 
 ## Installation
 
@@ -98,27 +98,24 @@ ros2 run osracer_base check_device
 
 ## Launch
 
-The complete OSRacer workspace supplies the required vehicle configuration. For
-a standalone integration, use the configuration name provided with the vehicle:
+Start the driver. Vehicle geometry and operating limits are read automatically
+from a compatible controller during the serial handshake:
 
 ```bash
-ros2 launch osracer_base chassis_driver.launch.py \
-  vehicle_profile:=YOUR_CONFIGURATION
+ros2 launch osracer_base chassis_driver.launch.py
 ```
 
 The default serial device is `/dev/osrbot_base`. Override it only when required:
 
 ```bash
 ros2 launch osracer_base chassis_driver.launch.py \
-  vehicle_profile:=YOUR_CONFIGURATION \
   port:=/dev/ttyACM0
 ```
 
 View odometry and TF in RViz:
 
 ```bash
-ros2 launch osracer_base odom_view.launch.py \
-  vehicle_profile:=YOUR_CONFIGURATION
+ros2 launch osracer_base odom_view.launch.py
 ```
 
 ## ROS Interfaces
@@ -148,9 +145,15 @@ disabled independently.
 
 ## Configuration
 
-Vehicle configuration files are installed from `config/vehicles/`. A file
-contains only the ROS values required by the driver, including geometry,
-operating limits, frame conventions, and interface compatibility information.
+On every serial connection, the driver validates `fw version`, `profile get`,
+and `vehicle get` responses before enabling motion. The accepted capability
+contract supplies wheelbase, separate forward and reverse speed limits, maximum
+steering angle, and the battery display range. These values remain in memory
+for that connection and are read again after reconnecting.
+
+ROS frame names, TF publication, sensor publication, topics, covariances, and
+serial timing remain configurable through launch arguments. Controller-reported
+vehicle capabilities are not ROS parameters.
 
 Frequently used parameters:
 
@@ -167,13 +170,13 @@ Frequently used parameters:
 | `publish_rc` | `true` | Publish receiver channels |
 | `publish_mag` | `true` | Publish magnetic-field data |
 | `publish_battery` | `true` | Publish battery state |
-| `battery_voltage_min` | `10.8` | Voltage displayed as 0% |
-| `battery_voltage_max` | `12.6` | Voltage displayed as 100% |
 
-The battery voltage comes from the vehicle controller. The minimum and maximum
-values only convert voltage to the percentage shown in
-`sensor_msgs/msg/BatteryState`; they do not change voltage measurement or
-vehicle protection behavior.
+The battery voltage and display range come from the controller. The range only
+converts voltage to the percentage shown in `sensor_msgs/msg/BatteryState`; it
+does not change voltage measurement or vehicle protection behavior.
+
+See the [vehicle capability protocol](docs/vehicle_capability_contract.md) for
+the public handshake and validation contract.
 
 ## Command Examples
 
@@ -202,10 +205,12 @@ within reach.
 
 ## Compatibility
 
-At startup, the driver checks the firmware-reported interface version and the
-selected vehicle configuration before enabling the data stream. A mismatch is
-reported in the ROS log and the connection remains closed. Use the Base revision
-and vehicle configuration supplied with the OSRacer workspace or delivery.
+At startup and after every reconnect, the driver checks the firmware interface,
+motion-ready profile state, and vehicle capability contract before enabling the
+data stream. The controller must support Proto 1.1 and `vehicle get` Contract 1.
+Older firmware without this command remains disconnected and motion commands
+are not sent; the ROS node stays available for a compatible controller or a
+later reconnect.
 
 When adapting an older OSRacer launch file, use the current Base parameter
 names:
@@ -217,7 +222,6 @@ names:
 | `odom_frame` | `odom_frame_id` |
 | `base_frame` | `base_frame_id` |
 | `imu_frame` | `imu_frame_id` |
-| `max_steering_angle_deg` | `max_steering_angle` |
 | `cmd_watchdog_timeout_s` | `cmd_timeout` |
 | `reconnect_interval_s` | `reconnect_interval` |
 | `firmware_version_timeout_s` | `firmware_version_timeout` |
@@ -232,7 +236,7 @@ names:
 | `/dev/osrbot_base` is missing | Reinstall the udev rule, reconnect USB, and verify `dialout` membership. |
 | Permission denied when opening the port | Confirm group membership, then log out and back in. |
 | The port is busy | Stop any other ROS node or utility using the chassis device. |
-| The driver reports an interface mismatch | Restore the Base revision and configuration supplied with the workspace. |
+| The driver reports an interface mismatch | Install controller firmware that supports Proto 1.1 and the vehicle capability Contract 1 response. |
 | Commands do not move the vehicle | Check connection logs, receiver-control priority, command topic, and timeout. |
 | A topic contains no data | Run `check_device`, restart the driver, and inspect the topic rate. |
 

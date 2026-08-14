@@ -1,4 +1,5 @@
 import importlib.util
+import hashlib
 import json
 import math
 import re
@@ -11,15 +12,13 @@ from collections import deque
 from pathlib import Path
 from unittest import mock
 
-import yaml
-
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DRIVER_PATH = REPO_ROOT / 'osracer_base' / 'chassis_driver.py'
 FIXTURE_PATH = REPO_ROOT / 'test' / 'fixtures' / 'proto_1_1' / 'session.json'
-PROFILE_FIXTURE_PATH = REPO_ROOT / 'test' / 'fixtures' / 'proto_1_1' / 'profiles.json'
 PROFILE_CONFIG_DIR = REPO_ROOT / 'config' / 'vehicles'
 WORKFLOW_PATH = REPO_ROOT / '.github' / 'workflows' / 'ros2-ci.yml'
+DESCRIPTION_LAUNCH_PATH = REPO_ROOT / 'launch' / 'description.launch.py'
+DESCRIPTION_LAUNCH_SHA256 = 'd67bdcd272aa275cd449d3feb234443aa1f61aae7360018e5af8242bdf219f27'
 
 
 class _Vector:
@@ -144,10 +143,17 @@ class _Clock:
 
 
 class _FakeSerial:
-    def __init__(self, version_line=None, profile_line=None, fail_on_write=None):
+    def __init__(
+        self,
+        version_line=None,
+        profile_line=None,
+        vehicle_line=None,
+        fail_on_write=None,
+    ):
         self.is_open = True
         self.version_line = version_line
         self.profile_line = profile_line
+        self.vehicle_line = vehicle_line
         self.fail_on_write = fail_on_write
         self.lines = deque()
         self.writes = []
@@ -168,6 +174,8 @@ class _FakeSerial:
             self.lines.append((self.version_line + '\n').encode('utf-8'))
         if text == 'profile get\n' and self.profile_line:
             self.lines.append((self.profile_line + '\n').encode('utf-8'))
+        if text == 'vehicle get\n' and self.vehicle_line:
+            self.lines.append((self.vehicle_line + '\n').encode('utf-8'))
         return len(payload)
 
     def flush(self):
@@ -255,6 +263,29 @@ def _fixture():
     return json.loads(FIXTURE_PATH.read_text(encoding='utf-8'))
 
 
+def _vehicle_response(**overrides):
+    values = {
+        'Contract': 1,
+        'Profile': 'fixture_alpha',
+        'Schema': 7,
+        'WheelbaseMm': 1375,
+        'ForwardMaxMmps': 4321,
+        'ReverseMaxMmps': 1234,
+        'SteeringMaxMdeg': 27123,
+        'BatteryMinMv': 11111,
+        'BatteryMaxMv': 14999,
+    }
+    values.update(overrides)
+    return (
+        f"VEHICLE: Contract={values['Contract']}, Profile={values['Profile']}, "
+        f"Schema={values['Schema']}, WheelbaseMm={values['WheelbaseMm']}, "
+        f"ForwardMaxMmps={values['ForwardMaxMmps']}, "
+        f"ReverseMaxMmps={values['ReverseMaxMmps']}, "
+        f"SteeringMaxMdeg={values['SteeringMaxMdeg']}, "
+        f"BatteryMinMv={values['BatteryMinMv']}, BatteryMaxMv={values['BatteryMaxMv']}"
+    )
+
+
 def _driver_shell():
     driver = object.__new__(DRIVER.ChassisDriver)
     driver.serial_lock = threading.Lock()
@@ -264,8 +295,9 @@ def _driver_shell():
     driver.port = 'loop://sanitized'
     driver.baudrate = 460800
     driver.firmware_version_timeout = 0.01
-    driver.vehicle_profile = 'red'
-    driver.profile_schema = 1
+    driver.capability_ready = False
+    driver.vehicle_capabilities = None
+    driver.capability_conn = None
     driver.connection_status_enabled = True
     driver.remote_control_active = None
     driver.publish_rc_enabled = True
@@ -282,19 +314,34 @@ def _driver_shell():
     return driver
 
 
+def _synthetic_capabilities():
+    return types.SimpleNamespace(
+        profile='fixture_alpha',
+        schema=7,
+        wheelbase_m=1.375,
+        forward_max_mps=4.321,
+        reverse_max_mps=1.234,
+        steering_max_rad=math.radians(27.123),
+        battery_min_v=11.111,
+        battery_max_v=14.999,
+    )
+
+
+def _bind_synthetic_capabilities(driver, serial_conn=None):
+    conn = serial_conn or _FakeSerial()
+    driver.serial_conn = conn
+    driver.capability_conn = conn
+    driver.vehicle_capabilities = _synthetic_capabilities()
+    driver.capability_ready = True
+    return conn
+
+
 class FixtureContractTests(unittest.TestCase):
     def test_fixture_is_sanitized_and_proto_1_1(self):
         data = _fixture()
         text = FIXTURE_PATH.read_text(encoding='utf-8')
 
         self.assertEqual(data['protocol'], '1.1')
-        self.assertEqual(
-            data['behavior_baseline'],
-            {
-                'repository': 'osrbot/osracer',
-                'commit': 'c329c21614f0335d9a8c7a12d2e638a70293052f',
-            },
-        )
         self.assertFalse(data['sanitization']['private_source_copied'])
         self.assertTrue(data['sanitization']['identifiers_removed'])
         self.assertTrue(data['sanitization']['telemetry_values_synthetic'])
@@ -302,6 +349,8 @@ class FixtureContractTests(unittest.TestCase):
         self.assertNotRegex(text, re.compile(r'\b[0-9A-F]{12}\b'))
         for forbidden in ('NEORACER', 'OSRCOREV', 'T005', 'customer', 'serial_number'):
             self.assertNotIn(forbidden, text)
+        for vehicle_name in ('neo', 'red', 'blue'):
+            self.assertNotRegex(text.lower(), rf'\b{vehicle_name}\b')
 
     def test_fixture_records_startup_and_watchdog_contract(self):
         data = _fixture()
@@ -311,6 +360,7 @@ class FixtureContractTests(unittest.TestCase):
                 'stream off\n',
                 'fw version\n',
                 'profile get\n',
+                'vehicle get\n',
                 'stream sync\n',
                 's\n',
                 'link up ros\n',
@@ -321,48 +371,25 @@ class FixtureContractTests(unittest.TestCase):
         self.assertEqual(data['control']['cmd_vel_near_zero_mps'], 0.01)
         self.assertEqual(data['startup']['firmware_version_timeout_seconds'], 0.3)
 
-    def test_vehicle_profiles_match_public_firmware_contract(self):
-        contract = json.loads(PROFILE_FIXTURE_PATH.read_text(encoding='utf-8'))
-        self.assertEqual(contract['protocol'], DRIVER.SUPPORTED_PROTOCOL)
-        self.assertEqual(set(contract['profiles']), {'neo', 'red', 'blue'})
-
-        for name, expected in contract['profiles'].items():
-            self.assertEqual(
-                set(expected),
-                {'profile_schema', 'wheelbase_m', 'ros_max_speed_mps', 'max_steering_angle_rad'},
+    def test_fixture_records_anonymous_vehicle_capability_contract(self):
+        contract = json.loads(
+            (REPO_ROOT / 'test/fixtures/proto_1_1/firmware_contract.json').read_text(
+                encoding='utf-8'
             )
-            config = yaml.safe_load((PROFILE_CONFIG_DIR / f'{name}.yaml').read_text(encoding='utf-8'))
-            params = config['/**']['ros__parameters']
-            self.assertEqual(
-                set(params),
-                {
-                    'vehicle_profile',
-                    'profile_schema',
-                    'wheelbase',
-                    'max_speed',
-                    'speed_mode',
-                    'max_steering_angle',
-                },
-            )
-            self.assertEqual(params['vehicle_profile'], name)
-            self.assertEqual(params['profile_schema'], expected['profile_schema'])
-            self.assertEqual(params['wheelbase'], expected['wheelbase_m'])
-            self.assertEqual(params['max_speed'], expected['ros_max_speed_mps'])
-            self.assertEqual(params['max_steering_angle'], expected['max_steering_angle_rad'])
-            for firmware_only in ('gpio', 'encoder', 'ppr', 'gear', 'wheel_radius', 'pid', 'pwm', 'nvs'):
-                self.assertNotIn(firmware_only, ' '.join(params).lower())
-
-        neo = yaml.safe_load((PROFILE_CONFIG_DIR / 'neo.yaml').read_text(encoding='utf-8'))
-        red = yaml.safe_load((PROFILE_CONFIG_DIR / 'red.yaml').read_text(encoding='utf-8'))
-        neo_params = neo['/**']['ros__parameters']
-        red_params = red['/**']['ros__parameters']
-        self.assertNotEqual(neo_params['vehicle_profile'], red_params['vehicle_profile'])
-        self.assertEqual(
-            {key: value for key, value in neo_params.items() if key != 'vehicle_profile'},
-            {key: value for key, value in red_params.items() if key != 'vehicle_profile'},
         )
+        self.assertEqual(contract['protocol'], DRIVER.SUPPORTED_PROTOCOL)
+        self.assertEqual(contract['vehicle_capability']['request'], 'vehicle get\n')
+        self.assertEqual(contract['vehicle_capability']['contract'], 1)
+        self.assertEqual(
+            contract['vehicle_capability']['response_fields'],
+            [
+                'Contract', 'Profile', 'Schema', 'WheelbaseMm', 'ForwardMaxMmps',
+                'ReverseMaxMmps', 'SteeringMaxMdeg', 'BatteryMinMv', 'BatteryMaxMv',
+            ],
+        )
+        self.assertEqual(list(PROFILE_CONFIG_DIR.glob('*.yaml')), [])
 
-    def test_fixture_records_c329_sensor_contract(self):
+    def test_fixture_records_sensor_contract(self):
         data = _fixture()
         self.assertEqual(data['publishers']['rc_topic'], 'rc_data')
         self.assertEqual(data['publishers']['mag_topic'], 'magnetometer_data')
@@ -392,9 +419,15 @@ class PublicApiTests(unittest.TestCase):
             self.assertIn(f"declare_parameter('{name}'", source)
             self.assertIn(f"DeclareLaunchArgument('{name}'", launch)
             self.assertIn(f"DeclareLaunchArgument('{name}'", odom_view_launch)
-        self.assertIn("declare_parameter('vehicle_profile'", source)
-        self.assertRegex(launch, r"DeclareLaunchArgument\(\s*'vehicle_profile'")
-        self.assertRegex(odom_view_launch, r"DeclareLaunchArgument\(\s*'vehicle_profile'")
+        for removed_name in (
+            'vehicle_profile', 'profile_schema', 'wheelbase', 'max_speed', 'speed_mode',
+            'max_steering_angle', 'battery_voltage_min', 'battery_voltage_max',
+        ):
+            self.assertNotIn(f"declare_parameter('{removed_name}'", source)
+            self.assertNotIn(f"DeclareLaunchArgument('{removed_name}'", launch)
+            self.assertNotIn(f"DeclareLaunchArgument('{removed_name}'", odom_view_launch)
+        self.assertNotIn("'profile_file'", launch)
+        self.assertNotIn('config/vehicles', (REPO_ROOT / 'setup.py').read_text(encoding='utf-8'))
         for legacy_name in (
             'port_name', 'baud_rate', 'odom_frame', 'base_frame', 'imu_frame',
             'max_steering_angle_deg', 'cmd_watchdog_timeout_s', 'reconnect_interval_s',
@@ -414,16 +447,25 @@ class PublicApiTests(unittest.TestCase):
         setup_source = (REPO_ROOT / 'setup.py').read_text(encoding='utf-8')
         self.assertIn("maintainer_email='winter@osrbot.com'", setup_source)
 
-    def test_readmes_document_c329_to_base_parameter_mapping(self):
-        for filename in ('README.md', 'README_zh.md'):
+    def test_readmes_document_runtime_capability_adaptation(self):
+        readmes = {
+            'README.md': 'docs/vehicle_capability_contract.md',
+            'README_zh.md': 'docs/vehicle_capability_contract_zh.md',
+        }
+        for filename, contract_doc in readmes.items():
             text = (REPO_ROOT / filename).read_text(encoding='utf-8')
+            self.assertIn('vehicle get', text)
+            self.assertIn(contract_doc, text)
+            self.assertNotIn('config/vehicles/', text)
+            self.assertNotIn('vehicle_profile:=', text)
+            self.assertNotIn('battery_voltage_min', text)
+            self.assertNotIn('battery_voltage_max', text)
             for legacy, canonical in (
                 ('port_name', 'port'),
                 ('baud_rate', 'baudrate'),
                 ('odom_frame', 'odom_frame_id'),
                 ('base_frame', 'base_frame_id'),
                 ('imu_frame', 'imu_frame_id'),
-                ('max_steering_angle_deg', 'max_steering_angle'),
                 ('cmd_watchdog_timeout_s', 'cmd_timeout'),
                 ('reconnect_interval_s', 'reconnect_interval'),
                 ('firmware_version_timeout_s', 'firmware_version_timeout'),
@@ -432,6 +474,24 @@ class PublicApiTests(unittest.TestCase):
                 ('mag_frame', 'mag_frame_id'),
             ):
                 self.assertRegex(text, rf'`{legacy}`\s*\|\s*`{canonical}`')
+
+    def test_tf_launch_and_frame_contract_are_unchanged(self):
+        digest = hashlib.sha256(DESCRIPTION_LAUNCH_PATH.read_bytes()).hexdigest()
+        self.assertEqual(digest, DESCRIPTION_LAUNCH_SHA256)
+
+        launch = (REPO_ROOT / 'launch/chassis_driver.launch.py').read_text(encoding='utf-8')
+        odom_view = (REPO_ROOT / 'launch/odom_view.launch.py').read_text(encoding='utf-8')
+        for name, default in (
+            ('odom_frame_id', 'odom'),
+            ('base_frame_id', 'base_footprint'),
+            ('imu_frame_id', 'imu_link'),
+            ('mag_frame_id', 'imu_link'),
+        ):
+            declaration = f"DeclareLaunchArgument('{name}', default_value='{default}')"
+            self.assertIn(declaration, launch)
+            self.assertIn(declaration, odom_view)
+            self.assertIn(f"'{name}': LaunchConfiguration('{name}')", launch)
+            self.assertIn(f"'{name}': LaunchConfiguration('{name}')", odom_view)
 
 
 class ParserTests(unittest.TestCase):
@@ -487,16 +547,118 @@ class ParserTests(unittest.TestCase):
                 self.data['startup']['firmware_profile_response']
             ),
             {
-                'id': 'red',
-                'schema': 1,
+                'id': 'fixture_alpha',
+                'schema': 7,
                 'state': 'READY',
                 'motion': True,
                 'writes': True,
             },
         )
-        self.assertIsNone(DRIVER.ChassisDriver.parse_profile_status('PROFILE: ID=red'))
+        self.assertIsNone(DRIVER.ChassisDriver.parse_profile_status('PROFILE: ID=fixture_alpha'))
 
-    def test_c329_response_prefixes_are_ignored(self):
+    def test_vehicle_capability_parser_accepts_exact_contract_and_converts_units(self):
+        capabilities = DRIVER.ChassisDriver.parse_vehicle_capabilities(
+            self.data['startup']['vehicle_capability_response'],
+            expected_profile='fixture_alpha',
+            expected_schema=7,
+        )
+
+        self.assertEqual(capabilities.profile, 'fixture_alpha')
+        self.assertEqual(capabilities.schema, 7)
+        self.assertAlmostEqual(capabilities.wheelbase_m, 1.375)
+        self.assertAlmostEqual(capabilities.forward_max_mps, 4.321)
+        self.assertAlmostEqual(capabilities.reverse_max_mps, 1.234)
+        self.assertAlmostEqual(capabilities.steering_max_rad, math.radians(27.123))
+        self.assertAlmostEqual(capabilities.battery_min_v, 11.111)
+        self.assertAlmostEqual(capabilities.battery_max_v, 14.999)
+
+    def test_vehicle_capability_parser_accepts_s1_kconfig_boundaries(self):
+        self.assertEqual(DRIVER.MAX_WHEELBASE_MM, 9_999)
+        self.assertEqual(DRIVER.MAX_SPEED_MMPS, 20_000)
+        self.assertEqual(DRIVER.MAX_STEERING_MDEG, 90_000)
+        self.assertEqual(DRIVER.MAX_BATTERY_MV, 60_000)
+        boundary_lines = (
+            _vehicle_response(
+                WheelbaseMm=1,
+                ForwardMaxMmps=1,
+                ReverseMaxMmps=1,
+                SteeringMaxMdeg=1,
+                BatteryMinMv=0,
+                BatteryMaxMv=1,
+            ),
+            _vehicle_response(
+                WheelbaseMm=9_999,
+                ForwardMaxMmps=20_000,
+                ReverseMaxMmps=20_000,
+                SteeringMaxMdeg=90_000,
+                BatteryMinMv=59_999,
+                BatteryMaxMv=60_000,
+            ),
+        )
+
+        for line in boundary_lines:
+            with self.subTest(line=line):
+                self.assertIsNotNone(
+                    DRIVER.ChassisDriver.parse_vehicle_capabilities(
+                        line,
+                        expected_profile='fixture_alpha',
+                        expected_schema=7,
+                    )
+                )
+
+    def test_vehicle_capability_parser_rejects_malformed_binding_and_ranges(self):
+        valid = _vehicle_response()
+        malformed = [
+            valid.rsplit(', BatteryMaxMv=', 1)[0],
+            valid + ', Extra=1',
+            valid.replace(
+                ', ReverseMaxMmps=1234',
+                ', ForwardMaxMmps=4321, ReverseMaxMmps=1234',
+            ),
+            valid.replace(
+                'WheelbaseMm=1375, ForwardMaxMmps=4321',
+                'ForwardMaxMmps=4321, WheelbaseMm=1375',
+            ),
+            _vehicle_response(WheelbaseMm='+1375'),
+            _vehicle_response(WheelbaseMm='-1375'),
+            _vehicle_response(WheelbaseMm='1375.0'),
+            _vehicle_response(WheelbaseMm=''),
+            _vehicle_response(Contract=2),
+            _vehicle_response(Profile='fixture_beta'),
+            _vehicle_response(Schema=8),
+            _vehicle_response(WheelbaseMm=0),
+            _vehicle_response(ForwardMaxMmps=0),
+            _vehicle_response(ReverseMaxMmps=0),
+            _vehicle_response(SteeringMaxMdeg=0),
+            _vehicle_response(BatteryMinMv=14999, BatteryMaxMv=14999),
+            _vehicle_response(BatteryMinMv=15000, BatteryMaxMv=14999),
+            _vehicle_response(WheelbaseMm=DRIVER.MAX_WHEELBASE_MM + 1),
+            _vehicle_response(ForwardMaxMmps=DRIVER.MAX_SPEED_MMPS + 1),
+            _vehicle_response(ReverseMaxMmps=DRIVER.MAX_SPEED_MMPS + 1),
+            _vehicle_response(SteeringMaxMdeg=DRIVER.MAX_STEERING_MDEG + 1),
+            _vehicle_response(BatteryMaxMv=DRIVER.MAX_BATTERY_MV + 1),
+            'UNKNOWN: synthetic response',
+        ]
+
+        for line in malformed:
+            with self.subTest(line=line):
+                self.assertIsNone(
+                    DRIVER.ChassisDriver.parse_vehicle_capabilities(
+                        line,
+                        expected_profile='fixture_alpha',
+                        expected_schema=7,
+                    )
+                )
+
+        self.assertIsNone(
+            DRIVER.ChassisDriver.parse_vehicle_capabilities(
+                _vehicle_response(Schema=0),
+                expected_profile='fixture_alpha',
+                expected_schema=0,
+            )
+        )
+
+    def test_non_telemetry_response_prefixes_are_ignored(self):
         for line in ('FW_VERSION: synthetic', 'LINK: synthetic', 'ERROR_DETAIL: synthetic', 'link pong ros'):
             self.driver.handle_device_line(line)
         self.assertEqual(self.driver.logger.warnings, [])
@@ -577,6 +739,10 @@ class SensorPublicationTests(unittest.TestCase):
         self.assertEqual(odom.header.stamp, 123)
         self.assertEqual(imu.header.stamp, odom.header.stamp)
         self.assertEqual(transform.header.stamp, odom.header.stamp)
+        self.assertEqual(odom.header.frame_id, 'odom')
+        self.assertEqual(odom.child_frame_id, 'base_footprint')
+        self.assertEqual(transform.header.frame_id, 'odom')
+        self.assertEqual(transform.child_frame_id, 'base_footprint')
         self.assertEqual(
             (odom.pose.pose.position.x, odom.pose.pose.position.y, odom.pose.pose.position.z),
             (1.0, 2.0, 3.0),
@@ -642,6 +808,7 @@ class SensorPublicationTests(unittest.TestCase):
         self.driver.mag_pub = mock.Mock()
         self.driver.publish_battery_enabled = True
         self.driver.battery_pub = mock.Mock()
+        _bind_synthetic_capabilities(self.driver)
 
         self.driver.publish_magnetometer('m nan 0.0 0.0'.split())
         self.driver.publish_battery(math.inf)
@@ -683,29 +850,25 @@ class SensorPublicationTests(unittest.TestCase):
 
         self.driver.publish_battery.assert_not_called()
 
-    def test_battery_message_uses_configured_voltage_range(self):
+    def test_battery_message_uses_controller_capability_range(self):
         self.driver.publish_battery_enabled = True
         self.driver.battery_pub = mock.Mock()
-        self.driver.battery_voltage_min = 10.8
-        self.driver.battery_voltage_max = 12.6
+        _bind_synthetic_capabilities(self.driver)
 
-        self.driver.publish_battery(12.1)
+        self.driver.publish_battery(13.055)
 
         message = self.driver.battery_pub.publish.call_args.args[0]
         self.assertEqual(message.header.stamp, 123)
-        self.assertEqual(message.voltage, 12.1)
-        self.assertAlmostEqual(message.percentage, (12.1 - 10.8) / (12.6 - 10.8))
+        self.assertEqual(message.voltage, 13.055)
+        self.assertAlmostEqual(message.percentage, 0.5)
 
-    def test_invalid_battery_range_does_not_divide_by_zero(self):
+    def test_battery_is_not_published_before_capability_handshake(self):
         self.driver.publish_battery_enabled = True
         self.driver.battery_pub = mock.Mock()
-        self.driver.battery_voltage_min = 12.0
-        self.driver.battery_voltage_max = 12.0
 
         self.driver.publish_battery(12.0)
 
-        message = self.driver.battery_pub.publish.call_args.args[0]
-        self.assertEqual(message.percentage, 0.0)
+        self.driver.battery_pub.publish.assert_not_called()
 
 
 class ConnectionLifecycleTests(unittest.TestCase):
@@ -717,6 +880,7 @@ class ConnectionLifecycleTests(unittest.TestCase):
         serial_conn = _FakeSerial(
             self.data['startup']['firmware_version_response'],
             self.data['startup']['firmware_profile_response'],
+            self.data['startup']['vehicle_capability_response'],
         )
         with mock.patch.object(DRIVER.serial, 'Serial', return_value=serial_conn), mock.patch.object(
             DRIVER.time, 'sleep', return_value=None
@@ -725,15 +889,40 @@ class ConnectionLifecycleTests(unittest.TestCase):
 
         self.assertEqual(serial_conn.writes, self.data['startup']['expected_host_commands'])
         self.driver.start_reader.assert_called_once_with()
+        self.assertTrue(self.driver.capability_ready)
+        self.assertIs(self.driver.capability_conn, serial_conn)
+        self.assertAlmostEqual(self.driver.vehicle_capabilities.forward_max_mps, 4.321)
+        self.assertAlmostEqual(self.driver.vehicle_capabilities.reverse_max_mps, 1.234)
+        self.assertIn('Vehicle capability contract accepted', self.driver.logger.infos)
+        log_text = '\n'.join(self.driver.logger.infos + self.driver.logger.warnings)
+        for private_value in ('1375', '4321', '1234', '27123', '11111', '14999'):
+            self.assertNotIn(private_value, log_text)
         self.assertTrue(any(message.startswith('Connected to chassis') for message in self.driver.logger.infos))
 
+    def test_identity_reader_skips_unrelated_lines_before_exact_response(self):
+        serial_conn = _FakeSerial()
+        serial_conn.lines.extend((
+            b'OK: previous command\n',
+            b'DIAG: synthetic notice\n',
+            (self.data['startup']['firmware_version_response'] + '\n').encode('utf-8'),
+        ))
+        self.driver.serial_conn = serial_conn
+
+        result = self.driver.read_identity_response(
+            self.driver.parse_firmware_version,
+            serial_conn,
+        )
+
+        self.assertEqual(result, ('PUBLIC_TEST_FIXTURE', '1.1'))
+
     def test_failed_initialization_closes_connection_and_does_not_start_reader(self):
-        for failed_command in ('profile get\n', 'stream sync\n', 's\n'):
+        for failed_command in ('profile get\n', 'vehicle get\n', 'stream sync\n', 's\n'):
             with self.subTest(failed_command=failed_command):
                 driver = _driver_shell()
                 serial_conn = _FakeSerial(
                     self.data['startup']['firmware_version_response'],
                     self.data['startup']['firmware_profile_response'],
+                    self.data['startup']['vehicle_capability_response'],
                     fail_on_write=failed_command,
                 )
                 with mock.patch.object(DRIVER.serial, 'Serial', return_value=serial_conn), mock.patch.object(
@@ -759,33 +948,43 @@ class ConnectionLifecycleTests(unittest.TestCase):
         self.assertIsNone(self.driver.serial_conn)
         self.driver.start_reader.assert_not_called()
 
-    def test_unsupported_protocol_and_profile_mismatch_fail_before_stream(self):
+    def test_protocol_profile_and_vehicle_contract_fail_before_stream(self):
         cases = (
             (
                 'FW_VERSION: ProjectVer=PUBLIC_TEST_FIXTURE, Proto=2.0',
                 self.data['startup']['firmware_profile_response'],
+                self.data['startup']['vehicle_capability_response'],
                 ['stream off\n', 'fw version\n', 'link down ros\n'],
             ),
             (
                 self.data['startup']['firmware_version_response'],
-                'PROFILE: ID=blue, Schema=1, State=READY, Motion=Yes, Writes=Yes',
+                'PROFILE: ID=fixture_alpha, Schema=7, State=BACKUP_REQUIRED, Motion=No, Writes=No',
+                self.data['startup']['vehicle_capability_response'],
                 ['stream off\n', 'fw version\n', 'profile get\n', 'link down ros\n'],
             ),
             (
                 self.data['startup']['firmware_version_response'],
-                'PROFILE: ID=red, Schema=2, State=READY, Motion=Yes, Writes=Yes',
-                ['stream off\n', 'fw version\n', 'profile get\n', 'link down ros\n'],
+                self.data['startup']['firmware_profile_response'],
+                _vehicle_response(Profile='fixture_beta'),
+                [
+                    'stream off\n', 'fw version\n', 'profile get\n', 'vehicle get\n',
+                    'link down ros\n',
+                ],
             ),
             (
                 self.data['startup']['firmware_version_response'],
-                'PROFILE: ID=red, Schema=1, State=BACKUP_REQUIRED, Motion=No, Writes=No',
-                ['stream off\n', 'fw version\n', 'profile get\n', 'link down ros\n'],
+                self.data['startup']['firmware_profile_response'],
+                _vehicle_response(Schema=8),
+                [
+                    'stream off\n', 'fw version\n', 'profile get\n', 'vehicle get\n',
+                    'link down ros\n',
+                ],
             ),
         )
-        for version_line, profile_line, expected_writes in cases:
-            with self.subTest(version_line=version_line, profile_line=profile_line):
+        for version_line, profile_line, vehicle_line, expected_writes in cases:
+            with self.subTest(vehicle_line=vehicle_line):
                 driver = _driver_shell()
-                serial_conn = _FakeSerial(version_line, profile_line)
+                serial_conn = _FakeSerial(version_line, profile_line, vehicle_line)
                 with mock.patch.object(
                     DRIVER.serial, 'Serial', return_value=serial_conn
                 ), mock.patch.object(DRIVER.time, 'sleep', return_value=None):
@@ -795,6 +994,56 @@ class ConnectionLifecycleTests(unittest.TestCase):
                 self.assertFalse(serial_conn.is_open)
                 self.assertIsNone(driver.serial_conn)
                 driver.start_reader.assert_not_called()
+
+    def test_missing_or_unknown_vehicle_response_fails_closed(self):
+        for vehicle_line in (None, 'UNKNOWN: synthetic response', 'VEHICLE: Contract=1'):
+            with self.subTest(vehicle_line=vehicle_line):
+                driver = _driver_shell()
+                serial_conn = _FakeSerial(
+                    self.data['startup']['firmware_version_response'],
+                    self.data['startup']['firmware_profile_response'],
+                    vehicle_line,
+                )
+                with mock.patch.object(
+                    DRIVER.serial, 'Serial', return_value=serial_conn
+                ), mock.patch.object(DRIVER.time, 'sleep', return_value=None):
+                    driver.ensure_connected()
+
+                self.assertFalse(driver.capability_ready)
+                self.assertIsNone(driver.vehicle_capabilities)
+                self.assertIsNone(driver.serial_conn)
+                self.assertFalse(serial_conn.is_open)
+                driver.start_reader.assert_not_called()
+
+    def test_missing_serial_path_keeps_driver_available_for_retry(self):
+        self.driver.port = '/dev/definitely-not-present-osracer-base'
+        with mock.patch.object(DRIVER.os.path, 'exists', return_value=False), mock.patch.object(
+            DRIVER.serial, 'Serial'
+        ) as serial_factory:
+            self.driver.ensure_connected()
+
+        self.assertFalse(self.driver.shutdown_event.is_set())
+        self.assertIsNone(self.driver.serial_conn)
+        self.assertFalse(self.driver.capability_ready)
+        serial_factory.assert_not_called()
+        self.driver.start_reader.assert_not_called()
+
+    def test_new_device_open_clears_stale_capabilities_before_handshake(self):
+        stale_conn = _bind_synthetic_capabilities(self.driver)
+        stale_conn.is_open = False
+        self.driver.serial_conn = None
+        replacement_conn = _FakeSerial(fail_on_write='stream off\n')
+
+        with mock.patch.object(
+            DRIVER.serial, 'Serial', return_value=replacement_conn
+        ), mock.patch.object(DRIVER.time, 'sleep', return_value=None):
+            self.driver.ensure_connected()
+
+        self.assertFalse(self.driver.capability_ready)
+        self.assertIsNone(self.driver.vehicle_capabilities)
+        self.assertIsNone(self.driver.capability_conn)
+        self.assertIsNone(self.driver.serial_conn)
+        self.assertFalse(replacement_conn.is_open)
 
     def test_write_failure_closes_exact_failed_connection(self):
         serial_conn = _FakeSerial(fail_on_write='synthetic\n')
@@ -821,11 +1070,13 @@ class ConnectionLifecycleTests(unittest.TestCase):
 
     def test_shutdown_sends_link_down_before_close(self):
         serial_conn = _FakeSerial()
-        self.driver.serial_conn = serial_conn
+        _bind_synthetic_capabilities(self.driver, serial_conn)
         self.driver.close_serial()
 
         self.assertEqual(serial_conn.writes, [self.data['startup']['shutdown_host_command']])
         self.assertFalse(serial_conn.is_open)
+        self.assertFalse(self.driver.capability_ready)
+        self.assertIsNone(self.driver.vehicle_capabilities)
 
     def test_expected_shutdown_read_error_is_silent_and_does_not_close_again(self):
         serial_conn = _FakeSerial()
@@ -877,7 +1128,7 @@ class ConnectionLifecycleTests(unittest.TestCase):
 
     def test_connected_device_gets_periodic_link_ping(self):
         serial_conn = _FakeSerial()
-        self.driver.serial_conn = serial_conn
+        _bind_synthetic_capabilities(self.driver, serial_conn)
 
         self.driver.refresh_connection_status()
 
@@ -886,10 +1137,10 @@ class ConnectionLifecycleTests(unittest.TestCase):
     def test_stale_reader_closes_only_its_captured_connection(self):
         stale_conn = _FakeSerial()
         replacement_conn = _FakeSerial()
-        self.driver.serial_conn = stale_conn
+        _bind_synthetic_capabilities(self.driver, stale_conn)
 
         def fail_after_reconnect():
-            self.driver.serial_conn = replacement_conn
+            _bind_synthetic_capabilities(self.driver, replacement_conn)
             raise TypeError('synthetic stale reader failure')
 
         stale_conn.readline = fail_after_reconnect
@@ -898,6 +1149,19 @@ class ConnectionLifecycleTests(unittest.TestCase):
         self.assertIs(self.driver.serial_conn, replacement_conn)
         self.assertFalse(stale_conn.is_open)
         self.assertTrue(replacement_conn.is_open)
+        self.assertTrue(self.driver.capability_ready)
+        self.assertIs(self.driver.capability_conn, replacement_conn)
+
+    def test_current_connection_failure_clears_bound_capabilities(self):
+        serial_conn = _FakeSerial(fail_on_write='synthetic\n')
+        _bind_synthetic_capabilities(self.driver, serial_conn)
+
+        self.assertFalse(self.driver.write_raw('synthetic\n'))
+
+        self.assertIsNone(self.driver.serial_conn)
+        self.assertFalse(self.driver.capability_ready)
+        self.assertIsNone(self.driver.vehicle_capabilities)
+        self.assertIsNone(self.driver.capability_conn)
 
     def test_reader_finally_preserves_replacement_under_serial_lock(self):
         class CountingLock:
@@ -1008,9 +1272,7 @@ class MainLifecycleTests(unittest.TestCase):
 class ControlMappingTests(unittest.TestCase):
     def setUp(self):
         self.driver = _driver_shell()
-        self.driver.max_speed = 0.8
-        self.driver.max_steering_angle = math.radians(30.0)
-        self.driver.wheelbase = 0.325
+        self.serial_conn = _bind_synthetic_capabilities(self.driver)
         self.driver.clock = _Clock(123)
         self.driver.get_clock = lambda: self.driver.clock
         self.driver.last_cmd_time = _TimePoint(0)
@@ -1023,42 +1285,70 @@ class ControlMappingTests(unittest.TestCase):
 
         self.driver.ackermann_cmd_callback(message)
 
-        self.driver.write_raw.assert_called_once_with('v 0.300 5.73\n')
+        self.driver.write_raw.assert_called_once_with(
+            'v 0.300 5.73\n', expected_conn=self.serial_conn
+        )
 
-    def test_base_configuration_bounds_ackermann_command(self):
+    def test_ackermann_uses_direction_specific_limits_and_steering_limit(self):
         message = DRIVER.AckermannDrive()
-        message.speed = 1.2
+        message.speed = 9.0
         message.steering_angle = math.radians(40.0)
 
         self.driver.ackermann_cmd_callback(message)
 
-        self.driver.write_raw.assert_called_once_with('v 0.800 30.00\n')
+        self.driver.write_raw.assert_called_once_with(
+            'v 4.321 27.12\n', expected_conn=self.serial_conn
+        )
         self.assertEqual(self.driver.last_cmd_time.nanoseconds, 123)
+
+        self.driver.write_raw.reset_mock()
+        message.speed = -9.0
+        self.driver.ackermann_cmd_callback(message)
+        self.driver.write_raw.assert_called_once_with(
+            'v -1.234 27.12\n', expected_conn=self.serial_conn
+        )
 
     def test_twist_maps_to_ackermann_steering(self):
         message = DRIVER.Twist()
         message.linear.x = 0.4
-        message.angular.z = 0.2
-        expected_degrees = math.degrees(math.atan(0.325 * 0.2 / 0.4))
+        message.angular.z = 0.1
+        expected_degrees = math.degrees(math.atan(1.375 * 0.1 / 0.4))
 
         self.driver.cmd_vel_callback(message)
 
-        self.driver.write_raw.assert_called_once_with(f'v 0.400 {expected_degrees:.2f}\n')
+        self.driver.write_raw.assert_called_once_with(
+            f'v 0.400 {expected_degrees:.2f}\n', expected_conn=self.serial_conn
+        )
 
-    def test_cmd_vel_near_zero_boundary_matches_c329(self):
+    def test_twist_clamps_speed_before_geometry_and_firmware_steering(self):
+        message = DRIVER.Twist()
+        message.linear.x = -8.0
+        message.angular.z = 8.0
+
+        self.driver.cmd_vel_callback(message)
+
+        self.driver.write_raw.assert_called_once_with(
+            'v -1.234 -27.12\n', expected_conn=self.serial_conn
+        )
+
+    def test_cmd_vel_near_zero_boundary(self):
         message = DRIVER.Twist()
         message.linear.x = 0.009
         message.angular.z = 0.0005
 
         self.driver.cmd_vel_callback(message)
 
-        self.driver.write_raw.assert_called_once_with('v 0.009 30.00\n')
+        self.driver.write_raw.assert_called_once_with(
+            'v 0.009 27.12\n', expected_conn=self.serial_conn
+        )
 
         self.driver.write_raw.reset_mock()
         message.linear.x = 0.01
-        expected_degrees = math.degrees(math.atan(0.325 * message.angular.z / message.linear.x))
+        expected_degrees = math.degrees(math.atan(1.375 * message.angular.z / message.linear.x))
         self.driver.cmd_vel_callback(message)
-        self.driver.write_raw.assert_called_once_with(f'v 0.010 {expected_degrees:.2f}\n')
+        self.driver.write_raw.assert_called_once_with(
+            f'v 0.010 {expected_degrees:.2f}\n', expected_conn=self.serial_conn
+        )
 
     def test_failed_command_does_not_refresh_watchdog(self):
         self.driver.write_raw.return_value = False
@@ -1070,10 +1360,36 @@ class ControlMappingTests(unittest.TestCase):
 
         self.assertIs(self.driver.last_cmd_time, previous)
 
+    def test_commands_before_handshake_are_not_sent(self):
+        self.driver.capability_ready = False
+        self.driver.vehicle_capabilities = None
+        self.driver.capability_conn = None
+        twist = DRIVER.Twist()
+        twist.linear.x = 0.2
+        ackermann = DRIVER.AckermannDrive()
+        ackermann.speed = 0.2
+
+        self.driver.cmd_vel_callback(twist)
+        self.driver.ackermann_cmd_callback(ackermann)
+
+        self.driver.write_raw.assert_not_called()
+
+    def test_stale_capability_binding_cannot_send_after_device_swap(self):
+        stale_binding = (
+            self.driver.serial_conn,
+            self.driver.vehicle_capabilities,
+        )
+        _bind_synthetic_capabilities(self.driver, _FakeSerial())
+
+        self.driver.send_drive_command(0.2, 0.1, expected_binding=stale_binding)
+
+        self.driver.write_raw.assert_not_called()
+
 
 class WatchdogTests(unittest.TestCase):
     def setUp(self):
         self.driver = _driver_shell()
+        self.serial_conn = _bind_synthetic_capabilities(self.driver)
         self.driver.clock = _Clock()
         self.driver.get_clock = lambda: self.driver.clock
         self.driver.last_cmd_time = _TimePoint(0)
@@ -1087,11 +1403,23 @@ class WatchdogTests(unittest.TestCase):
 
         self.driver.clock.nanoseconds = 501_000_000
         self.driver.watchdog_check()
-        self.driver.write_raw.assert_called_once_with('v 0.00 0.00\n')
+        self.driver.write_raw.assert_called_once_with(
+            'v 0.00 0.00\n', expected_conn=self.serial_conn
+        )
 
     def test_watchdog_boundary_matches_validated_behavior(self):
         self.driver.clock.nanoseconds = 500_000_000
         self.driver.watchdog_check()
+        self.driver.write_raw.assert_not_called()
+
+    def test_watchdog_does_not_write_before_handshake(self):
+        self.driver.clock.nanoseconds = 501_000_000
+        self.driver.capability_ready = False
+        self.driver.vehicle_capabilities = None
+        self.driver.capability_conn = None
+
+        self.driver.watchdog_check()
+
         self.driver.write_raw.assert_not_called()
 
 
@@ -1115,6 +1443,8 @@ class CiContractTests(unittest.TestCase):
         self.assertNotIn('python3 -m py_compile', workflow)
         self.assertIn("ET.parse('package.xml')", workflow)
         self.assertIn("rglob('*.json')", workflow)
+        self.assertNotIn("Path('config/vehicles')", workflow)
+        self.assertNotIn('import yaml', workflow)
         self.assertIn(
             'uses: astral-sh/ruff-action@278981a28ce3188b1e39527901f38254bf3aac89',
             workflow,

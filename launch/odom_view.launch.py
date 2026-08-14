@@ -10,11 +10,6 @@ def generate_launch_description():
     package_share = FindPackageShare('osracer_base')
 
     args = [
-        DeclareLaunchArgument(
-            'vehicle_profile',
-            description='Required chassis profile: neo, red, or blue',
-            choices=['neo', 'red', 'blue'],
-        ),
         DeclareLaunchArgument('port', default_value='/dev/osrbot_base'),
         DeclareLaunchArgument('baudrate', default_value='460800'),
         DeclareLaunchArgument('cmd_timeout', default_value='0.5'),
@@ -33,8 +28,6 @@ def generate_launch_description():
         DeclareLaunchArgument('odom_twist_covariance', default_value='[0.02, 0.20, 1.0, 1.0, 1.0, 0.30]'),
         DeclareLaunchArgument('publish_battery', default_value='true'),
         DeclareLaunchArgument('battery_topic', default_value='battery_state'),
-        DeclareLaunchArgument('battery_voltage_min', default_value='10.8'),
-        DeclareLaunchArgument('battery_voltage_max', default_value='12.6'),
         DeclareLaunchArgument(
             'rviz_config',
             default_value=PathJoinSubstitution([package_share, 'rviz', 'odom_view.rviz']),
@@ -46,7 +39,6 @@ def generate_launch_description():
             PathJoinSubstitution([package_share, 'launch', 'chassis_driver.launch.py'])
         ),
         launch_arguments={
-            'vehicle_profile': LaunchConfiguration('vehicle_profile'),
             'port': LaunchConfiguration('port'),
             'baudrate': LaunchConfiguration('baudrate'),
             'cmd_timeout': LaunchConfiguration('cmd_timeout'),
@@ -65,8 +57,6 @@ def generate_launch_description():
             'odom_twist_covariance': LaunchConfiguration('odom_twist_covariance'),
             'publish_battery': LaunchConfiguration('publish_battery'),
             'battery_topic': LaunchConfiguration('battery_topic'),
-            'battery_voltage_min': LaunchConfiguration('battery_voltage_min'),
-            'battery_voltage_max': LaunchConfiguration('battery_voltage_max'),
         }.items(),
     )
 

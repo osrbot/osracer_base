@@ -10,9 +10,11 @@ dependency or installation instruction.
 - No firmware source, device serial number, calibration value, or site log is
   included.
 - The samples cover framing, command order, sensor units, covariance defaults,
-  and timeout behavior; they are not vehicle configurations.
-- ROS geometry and operating limits come from explicit OSRacer Base vehicle
-  configuration files.
+  capability validation, and timeout behavior; they are not vehicle
+  configurations.
+- Capability values and identifiers are anonymous synthetic test data.
+- Geometry, directional operating limits, steering range, and battery display
+  range are read from the controller for each serial connection.
 - The synchronized telemetry frame has exactly 18 whitespace-separated fields.
 - `firmware_contract.json` defines the public protocol version, command units,
-  configuration identity, and schema used by host compatibility tests.
+  and vehicle-capability response fields used by host compatibility tests.
