@@ -210,6 +210,17 @@ ros2 topic echo /battery_state
 Perform first motion tests with the driven wheels raised and an emergency stop
 within reach.
 
+## Test-branch commissioning
+
+For `codex/base-safety-road-test`, follow the ordered
+[build, startup, and vehicle test checklist (中文)](README_zh.md#测试分支编译启动与试车).
+It covers verifying the loaded package, host tests and build, USB permissions,
+stationary checks, bounded low-speed commands, command timeout, invalid-input
+rejection, control-source switching, and disconnect/recovery checks.
+Keep the existing V2.1 firmware, PID, and vehicle settings unchanged. Begin with
+the driven wheels securely raised and a person ready to stop power; run only one
+driver and one motion publisher. Vehicle acceptance and merging remain separate.
+
 ## Compatibility
 
 At startup and after every reconnect, the driver checks the firmware interface,
