@@ -305,6 +305,7 @@ def _driver_shell():
     driver.publish_battery_enabled = True
     driver.nonfinite_frame_counts = {}
     driver.nonfinite_last_warning = {}
+    driver.invalid_command_last_warning = None
     driver.rc_pub = mock.Mock()
     driver.mag_pub = mock.Mock()
     driver.battery_pub = mock.Mock()
@@ -1384,6 +1385,281 @@ class ControlMappingTests(unittest.TestCase):
         self.driver.send_drive_command(0.2, 0.1, expected_binding=stale_binding)
 
         self.driver.write_raw.assert_not_called()
+
+
+class InvalidMotionCommandTests(unittest.TestCase):
+    def setUp(self):
+        self.driver = _driver_shell()
+        self.serial_conn = _bind_synthetic_capabilities(self.driver)
+        self.clock = _Clock(100_000_000)
+        self.driver.get_clock = lambda: self.clock
+        self.driver.last_cmd_time = _TimePoint(0)
+        self.driver.cmd_timeout = 0.5
+
+    def assert_stopped_without_renewing(self, callback):
+        self.serial_conn.writes.clear()
+        previous = self.driver.last_cmd_time
+
+        callback()
+
+        self.assertEqual(self.serial_conn.writes, ['v 0.00 0.00\n'])
+        self.assertIs(self.driver.last_cmd_time, previous)
+
+    def test_final_send_rejects_each_nonfinite_speed_and_steering(self):
+        for value in (math.nan, math.inf, -math.inf):
+            for speed, steering in ((value, 0.1), (0.2, value), (value, value)):
+                with self.subTest(speed=speed, steering=steering):
+                    self.assert_stopped_without_renewing(
+                        lambda: self.driver.send_drive_command(speed, steering)
+                    )
+
+    def test_twist_rejects_nonfinite_speed_before_clamping(self):
+        for value in (math.nan, math.inf, -math.inf):
+            with self.subTest(value=value):
+                message = DRIVER.Twist()
+                message.linear.x = value
+                self.assert_stopped_without_renewing(
+                    lambda: self.driver.cmd_vel_callback(message)
+                )
+
+    def test_twist_rejects_nonfinite_yaw_before_zero_speed_mapping(self):
+        for speed in (0.0, 0.009, 0.2):
+            for yaw_rate in (math.nan, math.inf, -math.inf):
+                with self.subTest(speed=speed, yaw_rate=yaw_rate):
+                    message = DRIVER.Twist()
+                    message.linear.x = speed
+                    message.angular.z = yaw_rate
+                    self.assert_stopped_without_renewing(
+                        lambda: self.driver.cmd_vel_callback(message)
+                    )
+
+    def test_ackermann_rejects_each_nonfinite_speed_and_steering(self):
+        for value in (math.nan, math.inf, -math.inf):
+            for field in ('speed', 'steering_angle'):
+                with self.subTest(value=value, field=field):
+                    message = DRIVER.AckermannDrive()
+                    message.speed = 0.2
+                    message.steering_angle = 0.1
+                    setattr(message, field, value)
+                    self.assert_stopped_without_renewing(
+                        lambda: self.driver.ackermann_cmd_callback(message)
+                    )
+
+    def test_repeated_invalid_commands_do_not_extend_last_valid_deadline(self):
+        self.driver.send_drive_command(0.2, 0.1)
+        previous = self.driver.last_cmd_time
+        self.serial_conn.writes.clear()
+        for nanoseconds in (200_000_000, 400_000_000, 600_000_000):
+            self.clock.nanoseconds = nanoseconds
+            self.driver.send_drive_command(math.nan, 0.0)
+            self.assertIs(self.driver.last_cmd_time, previous)
+
+        self.assertEqual(self.serial_conn.writes, ['v 0.00 0.00\n'] * 3)
+        self.serial_conn.writes.clear()
+        self.driver.watchdog_check()
+        self.assertEqual(self.serial_conn.writes, [])
+        self.clock.nanoseconds = 601_000_000
+        self.driver.watchdog_check()
+        self.assertEqual(self.serial_conn.writes, ['v 0.00 0.00\n'])
+
+    def test_valid_command_can_resume_after_invalid_stop(self):
+        self.driver.send_drive_command(math.nan, 0.0)
+        self.clock.nanoseconds = 200_000_000
+
+        self.driver.send_drive_command(-0.3, -0.1)
+
+        self.assertEqual(self.serial_conn.writes, ['v 0.00 0.00\n', 'v -0.300 -5.73\n'])
+        self.assertEqual(self.driver.last_cmd_time.nanoseconds, 200_000_000)
+
+    def test_invalid_command_does_not_write_before_handshake(self):
+        self.driver.capability_ready = False
+        twist = DRIVER.Twist()
+        twist.linear.x = math.nan
+        ackermann = DRIVER.AckermannDrive()
+        ackermann.steering_angle = math.inf
+
+        self.driver.cmd_vel_callback(twist)
+        self.driver.ackermann_cmd_callback(ackermann)
+        self.driver.send_drive_command(math.nan, math.inf)
+
+        self.assertEqual(self.serial_conn.writes, [])
+        self.assertEqual(self.driver.last_cmd_time.nanoseconds, 0)
+
+    def test_invalid_stale_binding_cannot_stop_replacement_connection(self):
+        stale_binding = self.driver.active_capability_binding()
+        replacement = _bind_synthetic_capabilities(self.driver, _FakeSerial())
+
+        self.driver.send_drive_command(math.nan, 0.0, expected_binding=stale_binding)
+
+        self.assertEqual(self.serial_conn.writes, [])
+        self.assertEqual(replacement.writes, [])
+        self.assertEqual(self.driver.last_cmd_time.nanoseconds, 0)
+
+    def test_invalid_stale_binding_cannot_stop_rebound_capabilities(self):
+        stale_binding = self.driver.active_capability_binding()
+        _bind_synthetic_capabilities(self.driver, self.serial_conn)
+
+        self.driver.send_drive_command(0.2, math.inf, expected_binding=stale_binding)
+
+        self.assertEqual(self.serial_conn.writes, [])
+        self.assertEqual(self.driver.last_cmd_time.nanoseconds, 0)
+
+    def test_twist_invalid_stop_rechecks_binding_after_callback_capture(self):
+        stale_binding = self.driver.active_capability_binding()
+        replacement = _bind_synthetic_capabilities(self.driver, _FakeSerial())
+        current_binding = self.driver.active_capability_binding()
+        message = DRIVER.Twist()
+        message.angular.z = math.nan
+        with mock.patch.object(
+            self.driver,
+            'active_capability_binding',
+            side_effect=[stale_binding, current_binding],
+        ):
+            self.driver.cmd_vel_callback(message)
+
+        self.assertEqual(self.serial_conn.writes, [])
+        self.assertEqual(replacement.writes, [])
+        self.assertEqual(self.driver.last_cmd_time.nanoseconds, 0)
+
+    def test_invalid_stop_rechecks_capabilities_after_value_conversion(self):
+        driver = self.driver
+
+        class ReboundValue:
+            def __float__(self):
+                _bind_synthetic_capabilities(driver, driver.serial_conn)
+                return math.nan
+
+        self.driver.send_drive_command(ReboundValue(), 0.0)
+
+        self.assertEqual(self.serial_conn.writes, [])
+        self.assertEqual(self.driver.last_cmd_time.nanoseconds, 0)
+
+    def test_invalid_stop_write_failure_disconnects_without_renewing(self):
+        self.serial_conn.fail_on_write = 'v 0.00 0.00\n'
+        previous = self.driver.last_cmd_time
+
+        self.driver.send_drive_command(math.nan, 0.0)
+
+        self.assertEqual(self.serial_conn.writes, [])
+        self.assertFalse(self.serial_conn.is_open)
+        self.assertIsNone(self.driver.serial_conn)
+        self.assertFalse(self.driver.capability_ready)
+        self.assertIs(self.driver.last_cmd_time, previous)
+
+    def test_reconnect_revalidates_before_new_invalid_or_valid_command(self):
+        self.serial_conn.fail_on_write = 'v 0.00 0.00\n'
+        self.driver.send_drive_command(math.nan, 0.0)
+        self.assertIsNone(self.driver.serial_conn)
+        data = _fixture()['startup']
+        replacement = _FakeSerial(
+            data['firmware_version_response'],
+            data['firmware_profile_response'],
+            data['vehicle_capability_response'],
+        )
+        with mock.patch.object(
+            DRIVER.serial, 'Serial', return_value=replacement
+        ), mock.patch.object(DRIVER.time, 'sleep', return_value=None):
+            self.driver.ensure_connected()
+        self.assertEqual(replacement.writes, data['expected_host_commands'])
+        replacement.writes.clear()
+
+        self.driver.send_drive_command(0.2, math.inf)
+        self.assertEqual(replacement.writes, ['v 0.00 0.00\n'])
+        self.assertEqual(self.driver.last_cmd_time.nanoseconds, 0)
+        self.driver.send_drive_command(9.0, 0.0)
+
+        self.assertEqual(replacement.writes[-1], 'v 4.321 0.00\n')
+        self.assertEqual(self.driver.last_cmd_time.nanoseconds, 100_000_000)
+        self.assertEqual(self.serial_conn.writes, [])
+
+    def test_invalid_command_warning_is_rate_limited_without_skipping_stops(self):
+        with mock.patch.object(DRIVER.time, 'monotonic', side_effect=[0.0, 1.0, 6.0]):
+            for _ in range(3):
+                self.driver.send_drive_command(math.nan, 0.0)
+
+        self.assertEqual(self.serial_conn.writes, ['v 0.00 0.00\n'] * 3)
+        self.assertEqual(
+            self.driver.logger.warnings,
+            ['Invalid motion command rejected; requesting stop'] * 2,
+        )
+
+    def test_short_motion_or_stop_write_disconnects_without_renewing(self):
+        for speed in (0.2, math.nan):
+            for count in (0, 3):
+                with self.subTest(speed=speed, count=count):
+                    self.setUp()
+                    self.serial_conn.write = mock.Mock(return_value=count)
+                    previous = self.driver.last_cmd_time
+
+                    self.driver.send_drive_command(speed, 0.0)
+
+                    self.assertIs(self.driver.last_cmd_time, previous)
+                    self.assertIsNone(self.driver.serial_conn)
+                    self.assertFalse(self.serial_conn.is_open)
+                    self.assertFalse(self.driver.capability_ready)
+                    self.serial_conn.write.assert_called_once()
+
+    def test_stop_flush_failure_disconnects_without_renewing(self):
+        self.serial_conn.flush = mock.Mock(side_effect=_SerialException('flush failed'))
+        previous = self.driver.last_cmd_time
+
+        self.driver.send_drive_command(math.nan, 0.0)
+
+        self.assertEqual(self.serial_conn.writes, ['v 0.00 0.00\n'])
+        self.assertIsNone(self.driver.serial_conn)
+        self.assertFalse(self.serial_conn.is_open)
+        self.assertIs(self.driver.last_cmd_time, previous)
+
+    def test_invalid_stop_does_not_follow_swap_at_write_boundary(self):
+        original_write = self.driver.write_raw
+        replacement = _FakeSerial()
+
+        def replace_then_write(command, expected_conn=None):
+            _bind_synthetic_capabilities(self.driver, replacement)
+            return original_write(command, expected_conn=expected_conn)
+
+        self.driver.write_raw = replace_then_write
+        self.driver.send_drive_command(math.nan, 0.0)
+
+        self.assertEqual(self.serial_conn.writes, [])
+        self.assertEqual(replacement.writes, [])
+        self.assertEqual(self.driver.last_cmd_time.nanoseconds, 0)
+
+    def test_finite_twist_extremes_stay_bounded_and_refresh_deadline(self):
+        for speed in (-1e308, -0.01, -0.009, 0.0, 0.009, 0.01, 1e308):
+            for yaw in (-1e308, -0.1, 0.0, 0.1, 1e308):
+                with self.subTest(speed=speed, yaw=yaw):
+                    message = DRIVER.Twist()
+                    message.linear.x = speed
+                    message.angular.z = yaw
+                    self.driver.cmd_vel_callback(message)
+                    _, sent_speed, sent_angle = self.serial_conn.writes[-1].split()
+                    self.assertTrue(math.isfinite(float(sent_speed)))
+                    self.assertTrue(math.isfinite(float(sent_angle)))
+                    self.assertGreaterEqual(float(sent_speed), -1.234)
+                    self.assertLessEqual(float(sent_speed), 4.321)
+                    self.assertLessEqual(abs(float(sent_angle)), 27.13)
+                    self.assertEqual(self.driver.last_cmd_time.nanoseconds, 100_000_000)
+
+    def test_unconvertible_commands_also_stop_without_renewing(self):
+        for value in (None, 'invalid', 10 ** 400):
+            for speed, steering in ((value, 0.0), (0.2, value)):
+                with self.subTest(value=type(value).__name__, speed=speed):
+                    self.assert_stopped_without_renewing(
+                        lambda: self.driver.send_drive_command(speed, steering)
+                    )
+                    twist = DRIVER.Twist()
+                    twist.linear.x = speed
+                    twist.angular.z = steering
+                    self.assert_stopped_without_renewing(
+                        lambda: self.driver.cmd_vel_callback(twist)
+                    )
+                    ackermann = DRIVER.AckermannDrive()
+                    ackermann.speed = speed
+                    ackermann.steering_angle = steering
+                    self.assert_stopped_without_renewing(
+                        lambda: self.driver.ackermann_cmd_callback(ackermann)
+                    )
 
 
 class WatchdogTests(unittest.TestCase):

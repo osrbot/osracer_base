@@ -137,6 +137,7 @@ class ChassisDriver(Node):
         self.remote_control_active = None
         self.nonfinite_frame_counts = {}
         self.nonfinite_last_warning = {}
+        self.invalid_command_last_warning = None
 
         self.create_timer(self.reconnect_interval, self.ensure_connected)
         self.create_timer(0.1, self.watchdog_check)
@@ -513,7 +514,9 @@ class ChassisDriver(Node):
             ):
                 return False
             try:
-                conn.write(command.encode('utf-8'))
+                payload = command.encode('utf-8')
+                if conn.write(payload) != len(payload):
+                    raise serial.SerialException('Incomplete serial command write')
                 conn.flush()
                 return True
             except SERIAL_ERRORS as exc:
@@ -534,19 +537,28 @@ class ChassisDriver(Node):
         conn, capabilities = binding
         if conn is None:
             return
+        try:
+            speed = float(msg.linear.x)
+            yaw_rate = float(msg.angular.z)
+        except (TypeError, ValueError, OverflowError):
+            self.stop_invalid_motion_command(binding)
+            return
+        if not math.isfinite(speed) or not math.isfinite(yaw_rate):
+            self.stop_invalid_motion_command(binding)
+            return
         speed = self.clamp(
-            msg.linear.x,
+            speed,
             -capabilities.reverse_max_mps,
             capabilities.forward_max_mps,
         )
         if abs(speed) < 0.01:
             steering = (
                 0.0
-                if msg.angular.z == 0.0
-                else math.copysign(capabilities.steering_max_rad, msg.angular.z)
+                if yaw_rate == 0.0
+                else math.copysign(capabilities.steering_max_rad, yaw_rate)
             )
         else:
-            steering = math.atan(capabilities.wheelbase_m * msg.angular.z / speed)
+            steering = math.atan(capabilities.wheelbase_m * yaw_rate / speed)
         self.send_drive_command(speed, steering, expected_binding=binding)
 
     def ackermann_cmd_callback(self, msg):
@@ -563,13 +575,22 @@ class ChassisDriver(Node):
             conn is not expected_binding[0] or capabilities is not expected_binding[1]
         ):
             return
+        try:
+            speed = float(speed)
+            steering = float(steering)
+        except (TypeError, ValueError, OverflowError):
+            self.stop_invalid_motion_command((conn, capabilities))
+            return
+        if not math.isfinite(speed) or not math.isfinite(steering):
+            self.stop_invalid_motion_command((conn, capabilities))
+            return
         speed = self.clamp(
-            float(speed),
+            speed,
             -capabilities.reverse_max_mps,
             capabilities.forward_max_mps,
         )
         steering = self.clamp(
-            float(steering),
+            steering,
             -capabilities.steering_max_rad,
             capabilities.steering_max_rad,
         )
@@ -578,6 +599,24 @@ class ChassisDriver(Node):
             expected_conn=conn,
         ):
             self.last_cmd_time = self.get_clock().now()
+
+    def stop_invalid_motion_command(self, expected_binding):
+        conn, capabilities = self.active_capability_binding()
+        if (
+            conn is None
+            or conn is not expected_binding[0]
+            or capabilities is not expected_binding[1]
+        ):
+            return
+        # A rejected command must not renew the last valid motion deadline.
+        self.write_raw("v 0.00 0.00\n", expected_conn=conn)
+        now = time.monotonic()
+        if (
+            self.invalid_command_last_warning is None
+            or now - self.invalid_command_last_warning >= NONFINITE_WARNING_INTERVAL_S
+        ):
+            self.invalid_command_last_warning = now
+            self.get_logger().warning('Invalid motion command rejected; requesting stop')
 
     def read_loop(self):
         current_thread = threading.current_thread()

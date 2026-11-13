@@ -127,8 +127,15 @@ ros2 launch osracer_base odom_view.launch.py
 | `/cmd_vel` | `geometry_msgs/msg/Twist` | Linear and angular velocity command |
 | `/ackermann_cmd` | `ackermann_msgs/msg/AckermannDrive` | Speed and steering-angle command |
 
-The most recent command is applied. If neither interface publishes within
-`cmd_timeout`, the driver sends a stop command.
+The most recent valid command is applied. If neither interface supplies a valid
+command within `cmd_timeout`, the driver sends a stop command. Speed and
+steering/angular-velocity fields must be finite numbers: a command containing
+NaN or infinity is rejected before mapping or limiting. On the current verified
+connection, the driver immediately requests zero speed and centered steering;
+the rejected command does not reset the valid-command timeout. Normal finite
+commands remain limited by the controller-reported capabilities.
+Failed or incomplete serial writes invalidate the connection without renewing
+the command timeout; reconnection requires a new capability handshake.
 
 ### Publications
 
