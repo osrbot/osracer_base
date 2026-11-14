@@ -12,7 +12,7 @@
 </p>
 
 <p align="center">
-  <strong>The ROS 2 chassis interface for the OSRacer software platform.</strong>
+  <strong>ROS 2 motion control and state sensing for intelligent vehicle applications.</strong>
 </p>
 
 <p align="center">
@@ -22,62 +22,73 @@
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-2EA44F" alt="MIT License"></a>
 </p>
 
-OSRacer Base provides the reusable ROS 2 connection between an OSRacer vehicle
-controller and the rest of the robot software. It translates the chassis serial
-stream into standard ROS messages and accepts both velocity and Ackermann drive
-commands.
+Standard ROS 2 interfaces connect vehicle control and state sensing to path tracking,
+localization, navigation, and autonomous driving applications.
 
-## Features
+## Core Capabilities
 
-- Velocity and Ackermann command interfaces
-- Odometry, IMU, raw RC, magnetometer, and battery-state publication
-- Shared timestamps for synchronized motion and inertial data
-- Automatic wheelbase, directional speed-limit, steering-limit, and battery-range adaptation
-- Configurable ROS frames, publication options, topics, and covariances
-- Command timeout with automatic stop
-- Serial reconnection and connection-state diagnostics
-- Firmware-interface validation before motion commands are enabled
-- Stable udev device naming for vehicle deployment
-- ROS 2 Humble and Jazzy continuous integration
+### Unified Motion Control
 
-## Latest Release
+Send velocity and Ackermann steering commands without handling serial communication directly.
 
-**OSRacer Base v0.3.0** provides the current ROS 2 chassis interface with:
+### Synchronized State Sensing
 
-- controller-reported vehicle capabilities validated on every connection;
-- fail-closed firmware-interface checks before motion is enabled;
-- synchronized odometry and inertial publication with shared timestamps;
-- rejection of invalid numeric telemetry before ROS message publication;
-- automatic stop, serial reconnection, and connection-state diagnostics;
-- build and test coverage on ROS 2 Humble and Jazzy.
+Synchronized motion and inertial data share timestamps for localization and state estimation.
 
-See the [v0.3.0 release notes](https://github.com/osrbot/osracer_base/releases/tag/v0.3.0).
+### Connection Management and Runtime Protection
 
-## Installation
+Connection checks, automatic reconnection, invalid-data filtering, and command-timeout stop requests.
 
-### As part of OSRacer
+### Standard ROS 2 Integration
 
-The main [OSRacer](https://github.com/osrbot/osracer) workspace imports the
-compatible Base revision through `osracer.repos`. This is the recommended path
-for complete vehicle, SLAM, navigation, and racing applications.
+Standard topics, configurable coordinate frames, and an RViz entry point.
 
-### Standalone workspace
+## Runtime Environment
+
+| Operating system | ROS 2 distribution |
+| --- | --- |
+| Ubuntu 22.04 | Humble |
+| Ubuntu 24.04 | Jazzy |
+
+Install the corresponding ROS 2 environment first. Commands use Bash; `rosdep`
+installs Python, ROS message, and serial dependencies.
+
+## Quick Start
+
+Install the build tools and load ROS. Replace `humble` with `jazzy` for Jazzy:
 
 ```bash
+source /opt/ros/humble/setup.bash
+sudo apt update
+sudo apt install git python3-rosdep python3-colcon-common-extensions python3-pytest
+```
+
+Run `sudo rosdep init` on first use only.
+
+```bash
+rosdep update
 mkdir -p ~/osracer_base_ws/src
 cd ~/osracer_base_ws/src
 git clone https://github.com/osrbot/osracer_base.git
-
-source /opt/ros/humble/setup.bash
-rosdep install --from-paths . --ignore-src --rosdistro humble -r -y
-
-cd ~/osracer_base_ws
-colcon build --symlink-install
-source install/setup.bash
 ```
 
-Use `/opt/ros/jazzy/setup.bash` and `--rosdistro jazzy` on Ubuntu 24.04 with
-ROS 2 Jazzy.
+Use the driver version supplied with your vehicle. Before upgrading, contact [technical support](mailto:winter@osrbot.com) to confirm compatibility.
+
+```bash
+cd ~/osracer_base_ws
+rosdep install --from-paths src --ignore-src --rosdistro "$ROS_DISTRO" -r -y
+colcon build --packages-select osracer_base --symlink-install
+source install/setup.bash
+ros2 pkg prefix osracer_base
+```
+
+Confirm the package path is under this workspace's `install` directory. Load the
+environment in each new terminal, substituting your workspace path if needed:
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/osracer_base_ws/install/setup.bash
+```
 
 ## Device Setup
 
@@ -98,8 +109,8 @@ ros2 run osracer_base check_device
 
 ## Launch
 
-Start the driver. Vehicle geometry and operating limits are read automatically
-from a compatible controller during the serial handshake:
+Connect the vehicle over USB, close other programs using its serial port,
+and start one driver instance:
 
 ```bash
 ros2 launch osracer_base chassis_driver.launch.py
@@ -112,11 +123,31 @@ ros2 launch osracer_base chassis_driver.launch.py \
   port:=/dev/ttyACM0
 ```
 
-View odometry and TF in RViz:
+To include RViz, use this entry point instead:
 
 ```bash
 ros2 launch osracer_base odom_view.launch.py
 ```
+
+Choose one entry point to avoid running duplicate drivers. Static TF examples
+in `description.launch.py` require configuration for actual mounting positions.
+
+## Connection and Data Checks
+
+A successful connection reports `Connected to chassis`. In another terminal
+with the same environment loaded:
+
+```bash
+ros2 node list
+ros2 topic list -t
+ros2 topic echo /battery_state --once
+ros2 topic echo /odom --once
+ros2 topic echo /imu/data --once
+ros2 topic hz /odom
+```
+
+Check that data updates and values are reasonable. Press Ctrl+C to finish observing
+the rate. See Troubleshooting for unexpected results.
 
 ## ROS Interfaces
 
@@ -127,15 +158,9 @@ ros2 launch osracer_base odom_view.launch.py
 | `/cmd_vel` | `geometry_msgs/msg/Twist` | Linear and angular velocity command |
 | `/ackermann_cmd` | `ackermann_msgs/msg/AckermannDrive` | Speed and steering-angle command |
 
-The most recent valid command is applied. If neither interface supplies a valid
-command within `cmd_timeout`, the driver sends a stop command. Speed and
-steering/angular-velocity fields must be finite numbers: a command containing
-NaN or infinity is rejected before mapping or limiting. On the current verified
-connection, the driver immediately requests zero speed and centered steering;
-the rejected command does not reset the valid-command timeout. Normal finite
-commands remain limited by the controller-reported capabilities.
-Failed or incomplete serial writes invalidate the connection without renewing
-the command timeout; reconnection requires a new capability handshake.
+The driver applies the most recent valid command. Inputs must be finite numbers;
+invalid inputs trigger a stop request. After communication loss, it reconnects
+and validates the connection before applying new motion commands.
 
 ### Publications
 
@@ -152,23 +177,13 @@ disabled independently.
 
 ## Configuration
 
-On every serial connection, the driver validates `fw version`, `profile get`,
-and `vehicle get` responses before enabling motion. The accepted capability
-contract supplies wheelbase, separate forward and reverse speed limits, maximum
-steering angle, and the battery display range. These values remain in memory
-for that connection and are read again after reconnecting.
-
-ROS frame names, TF publication, sensor publication, topics, covariances, and
-serial timing remain configurable through launch arguments. Controller-reported
-vehicle capabilities are not ROS parameters.
-
-Frequently used parameters:
+Common launch arguments:
 
 | Parameter | Default | Description |
 | --- | --- | --- |
 | `port` | `/dev/osrbot_base` | Chassis serial device |
 | `baudrate` | `460800` | Serial baud rate |
-| `cmd_timeout` | `0.5` | Time without a command before automatic stop |
+| `cmd_timeout` | `0.5` | Seconds without a valid command before a stop is requested |
 | `reconnect_interval` | `2.0` | Serial reconnect interval in seconds |
 | `odom_frame_id` | `odom` | Odometry frame |
 | `base_frame_id` | `base_footprint` | Vehicle base frame |
@@ -178,74 +193,44 @@ Frequently used parameters:
 | `publish_mag` | `true` | Publish magnetic-field data |
 | `publish_battery` | `true` | Publish battery state |
 
-The battery voltage and display range come from the controller. The range only
-converts voltage to the percentage shown in `sensor_msgs/msg/BatteryState`; it
-does not change voltage measurement or vehicle protection behavior.
-
-See the [vehicle capability protocol](docs/vehicle_capability_contract.md) for
-the public handshake and validation contract.
+`/battery_state` provides battery voltage and a voltage-based charge estimate
+for operational monitoring.
 
 ## Command Examples
 
-Publish a low-speed velocity command:
+Before first use, securely raise the driven wheels, keep steering clear, and have
+a stop mechanism ready. Select host control according to the vehicle instructions
+and run only one motion publisher. These examples cause motion; their values are
+not product speed limits.
+
+Send one velocity command (linear velocity in m/s, angular velocity in rad/s):
 
 ```bash
 ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist \
   "{linear: {x: 0.3}, angular: {z: 0.0}}"
 ```
 
-Publish an Ackermann command:
+Once stopped, separately send one Ackermann command (speed in m/s, steering in rad):
 
 ```bash
 ros2 topic pub --once /ackermann_cmd ackermann_msgs/msg/AckermannDrive \
   "{speed: 0.3, steering_angle: 0.1}"
 ```
 
-Inspect battery data:
+`--once` sends one message. For continuous control, keep the interval below
+`cmd_timeout`. On timeout, the driver requests zero speed and centered steering;
+physical stopping time depends on the vehicle.
+
+To end motion explicitly, stop other motion publishers first, then send zero speed:
 
 ```bash
-ros2 topic echo /battery_state
+ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist \
+  "{linear: {x: 0.0}, angular: {z: 0.0}}"
 ```
 
-Perform first motion tests with the driven wheels raised and an emergency stop
-within reach.
-
-## Test-branch commissioning
-
-For `codex/base-safety-road-test`, follow the ordered
-[build, startup, and vehicle test checklist (中文)](README_zh.md#测试分支编译启动与试车).
-It covers verifying the loaded package, host tests and build, USB permissions,
-stationary checks, bounded low-speed commands, command timeout, invalid-input
-rejection, control-source switching, and disconnect/recovery checks.
-Keep the existing V2.1 firmware, PID, and vehicle settings unchanged. Begin with
-the driven wheels securely raised and a person ready to stop power; run only one
-driver and one motion publisher. Vehicle acceptance and merging remain separate.
-
-## Compatibility
-
-At startup and after every reconnect, the driver checks the firmware interface,
-motion-ready profile state, and vehicle capability contract before enabling the
-data stream. The controller must support Proto 1.1 and `vehicle get` Contract 1.
-Older firmware without this command remains disconnected and motion commands
-are not sent; the ROS node stays available for a compatible controller or a
-later reconnect.
-
-When adapting an older OSRacer launch file, use the current Base parameter
-names:
-
-| Earlier launch name | Current Base parameter |
-| --- | --- |
-| `port_name` | `port` |
-| `baud_rate` | `baudrate` |
-| `odom_frame` | `odom_frame_id` |
-| `base_frame` | `base_frame_id` |
-| `imu_frame` | `imu_frame_id` |
-| `cmd_watchdog_timeout_s` | `cmd_timeout` |
-| `reconnect_interval_s` | `reconnect_interval` |
-| `firmware_version_timeout_s` | `firmware_version_timeout` |
-| `link_status_enabled` | `connection_status_enabled` |
-| `link_ping_period_s` | `connection_refresh_period` |
-| `mag_frame` | `mag_frame_id` |
+Confirm the vehicle is stationary before exiting the driver. A ROS stop command
+depends on communication and the active control source; it does not replace a
+physical stop mechanism.
 
 ## Troubleshooting
 
@@ -254,26 +239,13 @@ names:
 | `/dev/osrbot_base` is missing | Reinstall the udev rule, reconnect USB, and verify `dialout` membership. |
 | Permission denied when opening the port | Confirm group membership, then log out and back in. |
 | The port is busy | Stop any other ROS node or utility using the chassis device. |
-| The driver reports an interface mismatch | Install controller firmware that supports Proto 1.1 and the vehicle capability Contract 1 response. |
+| The driver reports an interface mismatch | Retain the error message and contact technical support. |
 | Commands do not move the vehicle | Check connection logs, receiver-control priority, command topic, and timeout. |
 | A topic contains no data | Run `check_device`, restart the driver, and inspect the topic rate. |
 
-## Development
-
-Run the package tests:
-
-```bash
-python3 -m pytest -q test
-```
-
-ROS 2 CI builds and tests the package on Humble and Jazzy. See
-[CHANGELOG.md](CHANGELOG.md) for user-visible changes.
-
-## Support
-
-- [GitHub Issues](https://github.com/osrbot/osracer_base/issues)
-- [OSRacer documentation](https://github.com/osrbot/osracer)
-- Technical support and collaboration: [winter@osrbot.com](mailto:winter@osrbot.com)
+For technical assistance, contact us through
+[GitHub Issues](https://github.com/osrbot/osracer_base/issues) or
+[winter@osrbot.com](mailto:winter@osrbot.com).
 
 ## Authors
 
@@ -281,7 +253,3 @@ ROS 2 CI builds and tests the package on Humble and Jazzy. See
 - Kit So
 - Jintai WANG
 - dajianli
-
-## License
-
-OSRacer Base is released under the [MIT License](LICENSE).

@@ -448,33 +448,23 @@ class PublicApiTests(unittest.TestCase):
         setup_source = (REPO_ROOT / 'setup.py').read_text(encoding='utf-8')
         self.assertIn("maintainer_email='winter@osrbot.com'", setup_source)
 
-    def test_readmes_document_runtime_capability_adaptation(self):
-        readmes = {
-            'README.md': 'docs/vehicle_capability_contract.md',
-            'README_zh.md': 'docs/vehicle_capability_contract_zh.md',
-        }
-        for filename, contract_doc in readmes.items():
+    def test_readmes_document_public_driver_usage(self):
+        for filename in ('README.md', 'README_zh.md'):
             text = (REPO_ROOT / filename).read_text(encoding='utf-8')
-            self.assertIn('vehicle get', text)
-            self.assertIn(contract_doc, text)
-            self.assertNotIn('config/vehicles/', text)
-            self.assertNotIn('vehicle_profile:=', text)
-            self.assertNotIn('battery_voltage_min', text)
-            self.assertNotIn('battery_voltage_max', text)
-            for legacy, canonical in (
-                ('port_name', 'port'),
-                ('baud_rate', 'baudrate'),
-                ('odom_frame', 'odom_frame_id'),
-                ('base_frame', 'base_frame_id'),
-                ('imu_frame', 'imu_frame_id'),
-                ('cmd_watchdog_timeout_s', 'cmd_timeout'),
-                ('reconnect_interval_s', 'reconnect_interval'),
-                ('firmware_version_timeout_s', 'firmware_version_timeout'),
-                ('link_status_enabled', 'connection_status_enabled'),
-                ('link_ping_period_s', 'connection_refresh_period'),
-                ('mag_frame', 'mag_frame_id'),
+            for required in (
+                'rosdep install', 'colcon build',
+                'ros2 run osracer_base install_udev_rules',
+                'ros2 run osracer_base check_device',
+                'ros2 launch osracer_base chassis_driver.launch.py',
+                '/cmd_vel', '/ackermann_cmd', '/odom', '/imu/data',
+                '/battery_state', 'cmd_timeout', 'dialout',
             ):
-                self.assertRegex(text, rf'`{legacy}`\s*\|\s*`{canonical}`')
+                self.assertIn(required, text)
+            for internal in (
+                'config/vehicles/', 'vehicle_profile:=',
+                'battery_voltage_min', 'battery_voltage_max',
+            ):
+                self.assertNotIn(internal, text)
 
     def test_tf_launch_and_frame_contract_are_unchanged(self):
         digest = hashlib.sha256(DESCRIPTION_LAUNCH_PATH.read_bytes()).hexdigest()
